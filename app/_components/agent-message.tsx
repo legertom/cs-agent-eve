@@ -18,6 +18,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { isSupportSearchOutput, SupportSearchPanel } from "./support-search-panel";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -105,6 +106,11 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool":
+      // Render the branded "Show your work" trust panel for support searches
+      // instead of the generic JSON tool card.
+      if (part.toolName === "search_support" && isSupportSearchOutput(part.output)) {
+        return <SupportSearchPanel output={part.output} />;
+      }
       return (
         <Tool
           defaultOpen={part.state === "approval-requested" || part.state === "approval-responded"}

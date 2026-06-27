@@ -58,3 +58,15 @@ curl -X POST http://127.0.0.1:3000/eve/v1/session \
    deployment (or a tunnel like `ngrok` over local dev) — not bare localhost.
 
 Then in Discord: `/ask message: summarize https://vercel.com/eve`
+
+## Use it inside Claude & VS Code (MCP)
+
+The support knowledge base is also exposed as a remote **MCP server** at
+`/api/mcp`, so colleagues can query Clever's docs from inside Claude (Desktop /
+web / Enterprise), VS Code (Copilot agent mode), Cursor, or Claude Code — without
+visiting the web app or Discord.
+
+See **[MCP.md](MCP.md)** for setup (including a copy-paste prompt that wires it
+into a VS Code project for you). Tools: `search_clever_kb` and
+`ask_clever_support`. Endpoint shared with the eve agent via
+[`lib/search.ts`](lib/search.ts).

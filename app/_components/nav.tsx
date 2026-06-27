@@ -25,6 +25,18 @@ export function Nav() {
             Chat
           </Link>
           <Link
+            href="/browse"
+            className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
+          >
+            Browse
+          </Link>
+          <Link
+            href="/features"
+            className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
+          >
+            Features
+          </Link>
+          <Link
             href="/about"
             className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
           >

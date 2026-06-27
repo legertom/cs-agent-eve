@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "clever-support": {
+      "type": "http",
+      "url": "https://clever-support-agent.vercel.app/api/mcp"
+    },
+    "clever-support-local": {
+      "type": "http",
+      "url": "http://localhost:3000/api/mcp"
+    }
+  }
+}

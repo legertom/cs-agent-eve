@@ -3,6 +3,7 @@
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
 
 const SUGGESTED_QUESTIONS = [
@@ -12,22 +13,56 @@ const SUGGESTED_QUESTIONS = [
   "Students can't see their apps — what should I check?",
 ];
 
+// Sticky "answering for" persona. When set, it rides along with each message as
+// ephemeral client context (model-facing, never shown in the transcript or
+// persisted) so the agent prefers articles for that audience instead of asking.
+const PERSONAS = [
+  { id: "anyone", label: "Anyone", context: null },
+  { id: "admin", label: "Admin", context: "a district or school admin" },
+  { id: "teacher", label: "Teacher", context: "a classroom teacher" },
+  { id: "family", label: "Family", context: "a parent or guardian (family)" },
+  { id: "app-partner", label: "App partner", context: "an application/integration partner" },
+] as const;
+
+const PERSONA_STORAGE_KEY = "clever-persona";
+
 export function AgentChat() {
   const agent = useEveAgent();
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
 
   const [input, setInput] = useState("");
+  const [persona, setPersona] = useState<string>("anyone");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [agent.data.messages]);
 
+  // Restore the sticky persona on mount (set in an effect to avoid SSR mismatch).
+  useEffect(() => {
+    const saved = localStorage.getItem(PERSONA_STORAGE_KEY);
+    if (saved && PERSONAS.some((p) => p.id === saved)) setPersona(saved);
+  }, []);
+
+  function changePersona(id: string) {
+    setPersona(id);
+    try {
+      localStorage.setItem(PERSONA_STORAGE_KEY, id);
+    } catch {
+      // localStorage may be unavailable (private mode) — persona still works for the session.
+    }
+  }
+
   function submit(text: string) {
     const trimmed = text.trim();
     if (!trimmed || isBusy) return;
-    void agent.send({ message: trimmed });
+    const ctx = PERSONAS.find((p) => p.id === persona)?.context;
+    const clientContext = ctx
+      ? `I'm helping ${ctx}. Prefer Clever help articles written for that audience and answer ` +
+        "from their point of view; you don't need to ask me who it's for."
+      : undefined;
+    void agent.send(clientContext ? { message: trimmed, clientContext } : { message: trimmed });
     setInput("");
   }
 
@@ -170,6 +205,28 @@ export function AgentChat() {
 
       {/* Input */}
       <footer className="shrink-0 border-clever-light-blue border-t bg-white px-6 py-4">
+        <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2">
+          <span className="text-clever-black/40 text-xs">Answering for</span>
+          {PERSONAS.map((p) => (
+            <button
+              aria-pressed={persona === p.id}
+              className={cn(
+                "rounded-full border px-2.5 py-1 text-xs transition-colors",
+                persona === p.id
+                  ? "border-clever-blue bg-clever-blue text-white"
+                  : "border-clever-light-blue bg-white text-clever-navy hover:bg-clever-light-blue/40",
+              )}
+              key={p.id}
+              onClick={() => changePersona(p.id)}
+              type="button"
+            >
+              {p.label}
+            </button>
+          ))}
+          {persona !== "anyone" ? (
+            <span className="text-clever-black/40 text-xs">· tailoring answers to this audience</span>
+          ) : null}
+        </div>
         <form className="mx-auto flex max-w-3xl gap-3" onSubmit={handleSubmit}>
           <input
             className="flex-1 rounded-xl border border-clever-light-blue bg-white px-4 py-3 text-clever-black placeholder:text-clever-black/40 focus:border-clever-blue focus:outline-none focus:ring-2 focus:ring-clever-blue/40 disabled:opacity-50"
