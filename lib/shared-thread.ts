@@ -10,8 +10,12 @@ export type SharedThreadPayload = {
   readonly createdAt: string;
   readonly title: string;
   readonly persona: string;
+  // True total spend (retrieval + answer inference) at share time.
   readonly threadCost: number;
   readonly retrievalCount: number;
+  // Per-message answer (LLM) cost, keyed by message id — inference cost isn't in
+  // the messages themselves, so it's frozen here for the read-only view's panels.
+  readonly inferenceByMessageId?: Readonly<Record<string, number>>;
   readonly messages: readonly EveMessage[];
 };
 

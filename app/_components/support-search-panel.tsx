@@ -8,6 +8,7 @@ import {
   ShieldCheckIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { ANSWER_MODEL } from "@/lib/inference-cost";
 import { cn } from "@/lib/utils";
 
 // "Show your work" trust panel — renders the search_support tool result inline
@@ -65,7 +66,7 @@ export function formatRetrievalUsd(n: number | null | undefined): string {
   if (n == null) return "—";
   if (n === 0) return "$0";
   if (n < 0.0001) return "<$0.0001";
-  if (n < 0.01) return `$${n.toFixed(4)}`;
+  if (n < 1) return `$${n.toFixed(4)}`; // sub-dollar: keep 4 dp so $0.0135 ≠ "$0.01"
   return `$${n.toFixed(2)}`;
 }
 
@@ -109,7 +110,15 @@ const LEVEL_META: Record<
 const pct = (n: number | null | undefined) =>
   n == null ? null : `${Math.round(n * 100)}%`;
 
-export function SupportSearchPanel({ output }: { readonly output: SearchOutput }) {
+export function SupportSearchPanel({
+  output,
+  inferenceCost,
+}: {
+  readonly output: SearchOutput;
+  // USD for the LLM call(s) on this turn (answer synthesis). Folded into the
+  // displayed total so "cost" reflects true spend, not just retrieval.
+  readonly inferenceCost?: number;
+}) {
   // Collapsed by default — this lives at the bottom of the answer as optional
   // "proof", not something the reader has to scroll past to get to the answer.
   const [open, setOpen] = useState(false);
@@ -120,29 +129,33 @@ export function SupportSearchPanel({ output }: { readonly output: SearchOutput }
   const topScore = confidence?.topScore ?? null;
   const reranked = output.method === "hybrid+rerank";
   const cost = output.cost;
+  const turnTotal =
+    cost?.total != null || inferenceCost != null
+      ? (cost?.total ?? 0) + (inferenceCost ?? 0)
+      : null;
 
   return (
-    <div className="not-prose w-full overflow-hidden rounded-xl border border-clever-light-blue bg-white">
-      {/* Header doubles as the toggle; the cost stays visible even when closed. */}
+    <div className="not-prose w-full overflow-hidden rounded-lg border border-clever-light-blue/60 bg-white">
+      {/* Header doubles as the toggle; the cost stays visible even when closed.
+          Kept deliberately quiet — this is optional "proof", not a headline. */}
       <button
         aria-expanded={open}
-        className="flex w-full items-center gap-2 bg-clever-light-blue/30 px-4 py-2.5 text-left transition-colors hover:bg-clever-light-blue/50"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-clever-light-blue/20"
         onClick={() => setOpen((v) => !v)}
         type="button"
       >
-        <SearchCheckIcon className="size-4 shrink-0 text-clever-blue" />
-        <span className="font-medium text-clever-navy text-sm">Show your work</span>
-        <span aria-hidden className={cn("size-2 shrink-0 rounded-full", meta.dot)} />
+        <SearchCheckIcon className="size-3.5 shrink-0 text-clever-blue/60" />
+        <span className="font-medium text-clever-navy/70 text-xs">Show your work</span>
         <span className="ml-auto flex items-center gap-2">
-          {cost?.total != null ? (
-            <span className="inline-flex items-center gap-1 rounded-full border border-clever-light-blue bg-white px-2 py-0.5 font-medium text-clever-navy text-xs tabular-nums">
-              <CoinsIcon className="size-3 text-clever-blue/70" />
-              {formatRetrievalUsd(cost.total)}
+          {turnTotal != null ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">
+              <CoinsIcon className="size-3 text-clever-blue/60" />
+              {formatRetrievalUsd(turnTotal)}
             </span>
           ) : null}
           <ChevronDownIcon
             className={cn(
-              "size-4 shrink-0 text-clever-black/40 transition-transform",
+              "size-3.5 shrink-0 text-clever-black/35 transition-transform",
               open && "rotate-180",
             )}
           />
@@ -150,7 +163,7 @@ export function SupportSearchPanel({ output }: { readonly output: SearchOutput }
       </button>
 
       {open ? (
-        <div className="space-y-4 border-clever-light-blue border-t px-4 py-3.5">
+        <div className="space-y-4 border-clever-light-blue/60 border-t px-4 py-3.5">
           {/* Confidence band */}
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2">
@@ -166,10 +179,10 @@ export function SupportSearchPanel({ output }: { readonly output: SearchOutput }
               {pct(topScore) ? (
                 <span className="text-clever-black/50 text-xs">
                   top match <span className="font-medium text-clever-navy">{pct(topScore)}</span>
-                  {pct(confidence?.margin) ? (
+                  {confidence?.margin != null && confidence.margin > 0 ? (
                     <span className="text-clever-black/40">
                       {" "}
-                      · leads #2 by {pct(confidence?.margin)}
+                      · leads #2 by {pct(confidence.margin)}
                     </span>
                   ) : null}
                 </span>
@@ -218,36 +231,52 @@ export function SupportSearchPanel({ output }: { readonly output: SearchOutput }
             <p className="text-clever-orange text-sm">{output.error}</p>
           ) : null}
 
-          {/* Cost — itemized for this single retrieval */}
-          {cost ? <CostBreakdown cost={cost} /> : null}
+          {/* Cost — itemized for this whole turn (retrieval + answer) */}
+          {cost || inferenceCost != null ? (
+            <CostBreakdown cost={cost} inferenceCost={inferenceCost} />
+          ) : null}
         </div>
       ) : null}
     </div>
   );
 }
 
-function CostBreakdown({ cost }: { readonly cost: RetrievalCost }) {
+function CostBreakdown({
+  cost,
+  inferenceCost,
+}: {
+  readonly cost?: RetrievalCost;
+  readonly inferenceCost?: number;
+}) {
+  const turnTotal = (cost?.total ?? 0) + (inferenceCost ?? 0);
   return (
     <div className="space-y-1.5 border-clever-light-blue/70 border-t pt-3">
       <p className="font-medium text-clever-black/40 text-xs uppercase tracking-wide">
-        Retrieval cost
+        Turn cost
       </p>
       <div className="space-y-1 text-xs">
-        <CostRow
-          label="Query embedding"
-          model={cost.models?.embedding}
-          note={cost.embeddingTokens != null ? `${cost.embeddingTokens} tok` : undefined}
-          value={formatRetrievalUsd(cost.embedding)}
-        />
-        <CostRow
-          label="Rerank"
-          model={cost.models?.rerank}
-          note={cost.rerankDocs ? `${cost.rerankDocs} docs` : undefined}
-          value={formatRetrievalUsd(cost.rerank)}
-        />
+        {cost ? (
+          <>
+            <CostRow
+              label="Query embedding"
+              model={cost.models?.embedding}
+              note={cost.embeddingTokens != null ? `${cost.embeddingTokens} tok` : undefined}
+              value={formatRetrievalUsd(cost.embedding)}
+            />
+            <CostRow
+              label="Rerank"
+              model={cost.models?.rerank}
+              note={cost.rerankDocs ? `${cost.rerankDocs} docs` : undefined}
+              value={formatRetrievalUsd(cost.rerank)}
+            />
+          </>
+        ) : null}
+        {inferenceCost != null ? (
+          <CostRow label="Answer" model={ANSWER_MODEL} value={formatRetrievalUsd(inferenceCost)} />
+        ) : null}
         <div className="flex items-center justify-between border-clever-light-blue/70 border-t pt-1.5 font-medium text-clever-navy">
-          <span>This retrieval</span>
-          <span className="tabular-nums">{formatRetrievalUsd(cost.total)}</span>
+          <span>This turn</span>
+          <span className="tabular-nums">{formatRetrievalUsd(turnTotal)}</span>
         </div>
       </div>
     </div>

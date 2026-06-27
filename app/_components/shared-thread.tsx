@@ -51,6 +51,7 @@ export function SharedThread({ payload }: { readonly payload: SharedThreadPayloa
           {payload.messages.map((message) => (
             <AgentMessage
               canRespond={false}
+              inferenceCost={payload.inferenceByMessageId?.[message.id]}
               isStreaming={false}
               key={message.id}
               message={message}

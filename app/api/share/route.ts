@@ -79,6 +79,17 @@ export async function POST(request: Request) {
   const str = (value: unknown, fallback: string, max: number) =>
     typeof value === "string" && value.trim() ? value.trim().slice(0, max) : fallback;
 
+  // Keep only finite numeric entries from the per-message inference map.
+  const rawInference = input.inferenceByMessageId;
+  const inferenceByMessageId =
+    rawInference && typeof rawInference === "object" && !Array.isArray(rawInference)
+      ? (Object.fromEntries(
+          Object.entries(rawInference as Record<string, unknown>)
+            .filter(([, v]) => typeof v === "number" && Number.isFinite(v))
+            .slice(0, MAX_SHARE_MESSAGES),
+        ) as Record<string, number>)
+      : undefined;
+
   const payload: SharedThreadPayload = {
     v: 1,
     createdAt: new Date().toISOString(),
@@ -86,6 +97,7 @@ export async function POST(request: Request) {
     persona: str(input.persona, "anyone", 40),
     threadCost: num(input.threadCost),
     retrievalCount: num(input.retrievalCount),
+    inferenceByMessageId,
     messages: messages as SharedThreadPayload["messages"],
   };
 

@@ -28,53 +28,77 @@ export type AgentInputResponse = {
 
 export function AgentMessage({
   canRespond,
+  inferenceCost,
   isStreaming,
   message,
   onInputResponses,
 }: {
   readonly canRespond: boolean;
+  // USD spent on the LLM call(s) for this message's turn (answer synthesis),
+  // surfaced in the trust panel's cost breakdown. Undefined when not available.
+  readonly inferenceCost?: number;
   readonly isStreaming: boolean;
   readonly message: EveMessage;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
   const isUser = message.role === "user";
-  // Completed support searches render as collapsed trust panels at the very
-  // bottom of the message — after the answer — rather than inline above it.
+  // Completed support searches render as standalone trust panels BELOW the
+  // answer bubble (not inside it), so the panel reads as a quiet footnote rather
+  // than filling the message bubble with a big card.
   const panelParts = message.parts.filter(isSearchPanelPart);
   const bodyParts = message.parts.filter((part) => !isSearchPanelPart(part));
   const lastTextIndex = bodyParts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
     -1,
   );
+  // Whether the body actually renders anything — avoids an empty light-blue
+  // bubble when a turn is just a search (step-start/empty reasoning render null).
+  const hasBody = bodyParts.some((part) => {
+    if (part.type === "step-start") return false;
+    if (part.type === "text") return Boolean(part.text?.trim());
+    if (part.type === "reasoning") return part.state === "streaming" || Boolean(part.text?.trim());
+    return true;
+  });
 
   return (
-    <div
-      className={cn("flex", isUser ? "justify-end" : "justify-start")}
-      data-optimistic={message.metadata?.optimistic ? "true" : undefined}
-    >
+    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] space-y-2 rounded-2xl px-5 py-3 text-sm data-[optimistic=true]:opacity-70",
-          isUser
-            ? "bg-clever-blue text-white"
-            : "border border-clever-light-blue bg-clever-light-blue/40 text-clever-black",
+          "flex max-w-[85%] flex-col gap-2 data-[optimistic=true]:opacity-70",
+          isUser ? "items-end" : "items-start",
         )}
+        data-optimistic={message.metadata?.optimistic ? "true" : undefined}
       >
-        {bodyParts.map((part, index) => (
-          <AgentMessagePart
-            canRespond={canRespond}
-            isUser={isUser}
-            key={partKey(part, index)}
-            onInputResponses={onInputResponses}
-            part={part}
-            showCaret={isStreaming && !isUser && index === lastTextIndex}
-          />
-        ))}
-        {panelParts.length > 0 ? (
-          <div className="space-y-2 pt-1">
+        {hasBody ? (
+          <div
+            className={cn(
+              "space-y-2 rounded-2xl px-5 py-3 text-sm",
+              isUser
+                ? "bg-clever-blue text-white"
+                : "border border-clever-light-blue bg-clever-light-blue/40 text-clever-black",
+            )}
+          >
+            {bodyParts.map((part, index) => (
+              <AgentMessagePart
+                canRespond={canRespond}
+                isUser={isUser}
+                key={partKey(part, index)}
+                onInputResponses={onInputResponses}
+                part={part}
+                showCaret={isStreaming && !isUser && index === lastTextIndex}
+              />
+            ))}
+          </div>
+        ) : null}
+        {!isUser && panelParts.length > 0 ? (
+          <div className="w-full space-y-2">
             {panelParts.map((part, index) =>
               isSupportSearchOutput(part.output) ? (
-                <SupportSearchPanel key={partKey(part, index)} output={part.output} />
+                <SupportSearchPanel
+                  inferenceCost={index === 0 ? inferenceCost : undefined}
+                  key={partKey(part, index)}
+                  output={part.output}
+                />
               ) : null,
             )}
           </div>
@@ -121,8 +145,13 @@ function AgentMessagePart({
         </MessageResponse>
       );
     case "reasoning":
+      // Skip empty reasoning, and don't force it open — it stays collapsed once
+      // the turn is done (and on replayed/shared transcripts) so it isn't noise.
+      if (part.state !== "streaming" && !part.text?.trim()) {
+        return null;
+      }
       return (
-        <Reasoning defaultOpen isStreaming={part.state === "streaming"}>
+        <Reasoning isStreaming={part.state === "streaming"}>
           <ReasoningTrigger />
           <ReasoningContent>{part.text}</ReasoningContent>
         </Reasoning>

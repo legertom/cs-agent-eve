@@ -3,6 +3,7 @@
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, CoinsIcon, Share2Icon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { priceInferenceUsage } from "@/lib/inference-cost";
 import { firstUserText } from "@/lib/shared-thread";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
@@ -48,6 +49,23 @@ export function AgentChat() {
       }
     }
   }
+
+  // Inference cost — the agent's own LLM calls (the dominant spend), priced from
+  // the step.completed stream events and grouped by turn so each turn's panel can
+  // show its answer cost. Summed with retrieval for the true thread total.
+  const inferenceByTurn = new Map<string, number>();
+  for (const event of agent.events) {
+    if (event.type === "step.completed") {
+      const turnId = event.data.turnId;
+      inferenceByTurn.set(
+        turnId,
+        (inferenceByTurn.get(turnId) ?? 0) + priceInferenceUsage(event.data.usage),
+      );
+    }
+  }
+  let inferenceCost = 0;
+  for (const value of inferenceByTurn.values()) inferenceCost += value;
+  const totalCost = threadCost + inferenceCost;
 
   const [input, setInput] = useState("");
   const [persona, setPersona] = useState<string>("anyone");
@@ -103,6 +121,15 @@ export function AgentChat() {
     if (isBusy || isEmpty || shareState === "sharing") return;
     setShareState("sharing");
     try {
+      // Inference cost isn't in the messages (it's derived from stream events),
+      // so freeze each turn's answer cost onto its message for the read-only view.
+      const inferenceByMessageId: Record<string, number> = {};
+      for (const message of agent.data.messages) {
+        const turnId = message.metadata?.turnId;
+        if (turnId && inferenceByTurn.has(turnId)) {
+          inferenceByMessageId[message.id] = inferenceByTurn.get(turnId) ?? 0;
+        }
+      }
       const res = await fetch("/api/share", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -110,8 +137,9 @@ export function AgentChat() {
           messages: agent.data.messages,
           persona,
           title: firstUserText(agent.data.messages),
-          threadCost,
+          threadCost: totalCost,
           retrievalCount,
+          inferenceByMessageId,
         }),
       });
       if (!res.ok) throw new Error(`share failed: ${res.status}`);
@@ -140,16 +168,14 @@ export function AgentChat() {
           {isEmpty ? null : (
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-              {retrievalCount > 0 ? (
+              {totalCost > 0 ? (
                 <span
                   className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-clever-light-blue/30 px-3 py-1.5 text-clever-navy text-sm"
-                  title={`${retrievalCount} retrieval${retrievalCount === 1 ? "" : "s"} via Vercel AI Gateway this thread`}
+                  title={`Thread spend via Vercel AI Gateway — answer (Claude): ${formatRetrievalUsd(inferenceCost)} · retrieval, ${retrievalCount} search${retrievalCount === 1 ? "" : "es"}: ${formatRetrievalUsd(threadCost)}`}
                 >
                   <CoinsIcon className="size-3.5 text-clever-blue" />
-                  <span className="font-medium tabular-nums">{formatRetrievalUsd(threadCost)}</span>
-                  <span className="text-clever-black/40">
-                    · {retrievalCount} retrieval{retrievalCount === 1 ? "" : "s"} this thread
-                  </span>
+                  <span className="font-medium tabular-nums">{formatRetrievalUsd(totalCost)}</span>
+                  <span className="text-clever-black/40">· thread total</span>
                 </span>
               ) : (
                 <span aria-hidden />
@@ -267,6 +293,11 @@ export function AgentChat() {
           {agent.data.messages.map((message, index) => (
             <AgentMessage
               canRespond={!isBusy}
+              inferenceCost={
+                message.metadata?.turnId
+                  ? inferenceByTurn.get(message.metadata.turnId)
+                  : undefined
+              }
               isStreaming={
                 agent.status === "streaming" && index === agent.data.messages.length - 1
               }
