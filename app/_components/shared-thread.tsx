@@ -1,10 +1,10 @@
 "use client";
 
-import { ArrowRightIcon, CoinsIcon } from "lucide-react";
+import { ArrowRightIcon } from "lucide-react";
 import Link from "next/link";
 import type { AgentInputResponse } from "./agent-message";
 import { AgentMessage } from "./agent-message";
-import { formatRetrievalUsd } from "./support-search-panel";
+import { ThreadWorkPanel } from "./thread-work-panel";
 import type { SharedThreadPayload } from "@/lib/shared-thread";
 
 // Read-only replay of a shared thread. AgentMessage is purely presentational, so
@@ -23,41 +23,29 @@ export function SharedThread({ payload }: { readonly payload: SharedThreadPayloa
               <p className="font-medium text-clever-navy text-sm">Shared conversation · read-only</p>
               <p className="truncate text-clever-black/50 text-xs">{payload.title}</p>
             </div>
-            <div className="flex items-center gap-2">
-              {payload.retrievalCount > 0 ? (
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 text-clever-navy text-sm"
-                  title={`${payload.retrievalCount} retrieval${payload.retrievalCount === 1 ? "" : "s"} via Vercel AI Gateway`}
-                >
-                  <CoinsIcon className="size-3.5 text-clever-blue" />
-                  <span className="font-medium tabular-nums">
-                    {formatRetrievalUsd(payload.threadCost)}
-                  </span>
-                  <span className="text-clever-black/40">
-                    · {payload.retrievalCount} retrieval{payload.retrievalCount === 1 ? "" : "s"}
-                  </span>
-                </span>
-              ) : null}
-              <Link
-                className="inline-flex items-center gap-1.5 rounded-lg bg-clever-blue px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-clever-navy"
-                href="/"
-              >
-                Ask your own question
-                <ArrowRightIcon className="size-3.5" />
-              </Link>
-            </div>
+            <Link
+              className="inline-flex items-center gap-1.5 rounded-lg bg-clever-blue px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-clever-navy"
+              href="/"
+            >
+              Ask your own question
+              <ArrowRightIcon className="size-3.5" />
+            </Link>
           </div>
 
           {payload.messages.map((message) => (
             <AgentMessage
               canRespond={false}
-              inferenceCost={payload.inferenceByMessageId?.[message.id]}
               isStreaming={false}
               key={message.id}
               message={message}
               onInputResponses={NOOP}
             />
           ))}
+
+          <ThreadWorkPanel
+            inferenceByMessageId={payload.inferenceByMessageId}
+            messages={payload.messages}
+          />
 
           <p className="pt-2 text-center text-clever-black/40 text-xs">
             Shared from the Clever Support Assistant · answers are generated from

@@ -1,13 +1,15 @@
 "use client";
 
 import { useEveAgent } from "eve/react";
-import { AlertCircleIcon, CheckIcon, Share2Icon } from "lucide-react";
+import { AlertCircleIcon, CheckIcon, FlagIcon, Share2Icon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { priceInferenceUsage } from "@/lib/inference-cost";
 import { firstUserText } from "@/lib/shared-thread";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
+import { FeedbackForm } from "./feedback-form";
 import { retrievalCostTotal } from "./support-search-panel";
+import { ThreadWorkPanel } from "./thread-work-panel";
 
 const SUGGESTED_QUESTIONS = [
   "How do I set up Google SSO?",
@@ -67,10 +69,21 @@ export function AgentChat() {
   for (const value of inferenceByTurn.values()) inferenceCost += value;
   const totalCost = threadCost + inferenceCost;
 
+  // Per-message answer cost (message id → its turn's inference), for the bottom
+  // record panel and the share snapshot.
+  const inferenceByMessageId: Record<string, number> = {};
+  for (const message of agent.data.messages) {
+    const turnId = message.metadata?.turnId;
+    if (turnId && inferenceByTurn.has(turnId)) {
+      inferenceByMessageId[message.id] = inferenceByTurn.get(turnId) ?? 0;
+    }
+  }
+
   const [input, setInput] = useState("");
   const [persona, setPersona] = useState<string>("anyone");
   const [shareState, setShareState] = useState<"idle" | "sharing" | "copied" | "error">("idle");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [showFeedback, setShowFeedback] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -114,6 +127,7 @@ export function AgentChat() {
     setInput("");
     setShareState("idle");
     setShareUrl(null);
+    setShowFeedback(false);
   }
 
   // Snapshot the current thread to a shareable, read-only URL and copy it.
@@ -121,15 +135,6 @@ export function AgentChat() {
     if (isBusy || isEmpty || shareState === "sharing") return;
     setShareState("sharing");
     try {
-      // Inference cost isn't in the messages (it's derived from stream events),
-      // so freeze each turn's answer cost onto its message for the read-only view.
-      const inferenceByMessageId: Record<string, number> = {};
-      for (const message of agent.data.messages) {
-        const turnId = message.metadata?.turnId;
-        if (turnId && inferenceByTurn.has(turnId)) {
-          inferenceByMessageId[message.id] = inferenceByTurn.get(turnId) ?? 0;
-        }
-      }
       const res = await fetch("/api/share", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -171,6 +176,22 @@ export function AgentChat() {
                   dropdown — no prominent thread-total chip in the toolbar. */}
               <div className="flex items-center justify-end gap-2">
               <div className="flex items-center gap-2">
+                <button
+                  aria-label="Flag this thread for the support team"
+                  aria-pressed={showFeedback}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 font-medium text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    showFeedback
+                      ? "border-clever-orange/50 bg-clever-orange/10 text-clever-orange"
+                      : "border-clever-light-blue bg-white text-clever-navy hover:bg-clever-light-blue/50",
+                  )}
+                  disabled={isBusy}
+                  onClick={() => setShowFeedback((v) => !v)}
+                  type="button"
+                >
+                  <FlagIcon className="size-3.5" />
+                  Flag
+                </button>
                 <button
                   aria-label="Share this conversation"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/50 disabled:cursor-not-allowed disabled:opacity-50"
@@ -237,6 +258,16 @@ export function AgentChat() {
                   </a>
                 </p>
               ) : null}
+              {showFeedback ? (
+                <FeedbackForm
+                  inferenceByMessageId={inferenceByMessageId}
+                  messages={agent.data.messages}
+                  onClose={() => setShowFeedback(false)}
+                  persona={persona}
+                  retrievalCount={retrievalCount}
+                  threadCost={totalCost}
+                />
+              ) : null}
             </div>
           )}
           {isEmpty ? (
@@ -283,11 +314,6 @@ export function AgentChat() {
           {agent.data.messages.map((message, index) => (
             <AgentMessage
               canRespond={!isBusy}
-              inferenceCost={
-                message.metadata?.turnId
-                  ? inferenceByTurn.get(message.metadata.turnId)
-                  : undefined
-              }
               isStreaming={
                 agent.status === "streaming" && index === agent.data.messages.length - 1
               }
@@ -321,6 +347,13 @@ export function AgentChat() {
               </div>
             </div>
           ) : null}
+
+          {/* Single "Show your work" record, pinned at the bottom of the thread,
+              accumulating every retrieval + cost as the conversation grows. */}
+          <ThreadWorkPanel
+            inferenceByMessageId={inferenceByMessageId}
+            messages={agent.data.messages}
+          />
 
           <div ref={messagesEndRef} />
         </div>

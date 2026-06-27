@@ -1,4 +1,4 @@
-import { get, put } from "@vercel/blob";
+import { head, put } from "@vercel/blob";
 import type { SharedThreadPayload } from "./shared-thread";
 
 // Persistence for shared thread snapshots, backed by a public Vercel Blob store
@@ -30,9 +30,12 @@ export async function saveShare(payload: SharedThreadPayload): Promise<string> {
 export async function loadShare(id: string): Promise<SharedThreadPayload | null> {
   if (!ID_RE.test(id)) return null;
   try {
-    const result = await get(`${PREFIX}${id}.json`, { access: "public" });
-    if (!result || result.statusCode !== 200) return null;
-    return (await new Response(result.stream).json()) as SharedThreadPayload;
+    // head() resolves the blob's public URL by pathname; we then fetch the body.
+    // (get({access:"public"}) 403s against this store — head + fetch is reliable.)
+    const meta = await head(`${PREFIX}${id}.json`);
+    const res = await fetch(meta.url);
+    if (!res.ok) return null;
+    return (await res.json()) as SharedThreadPayload;
   } catch {
     // Unknown id (BlobNotFoundError) or a transient read error → treat as 404.
     return null;

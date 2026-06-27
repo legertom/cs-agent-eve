@@ -36,7 +36,7 @@ type RetrievalCost = {
   models?: { embedding?: string; rerank?: string };
 };
 
-type SearchOutput = {
+export type SearchOutput = {
   query?: string;
   count?: number;
   method?: string;
@@ -113,11 +113,15 @@ const pct = (n: number | null | undefined) =>
 export function SupportSearchPanel({
   output,
   inferenceCost,
+  label,
 }: {
   readonly output: SearchOutput;
   // USD for the LLM call(s) on this turn (answer synthesis). Folded into the
   // displayed total so "cost" reflects true spend, not just retrieval.
   readonly inferenceCost?: number;
+  // Header text. Defaults to "Show your work"; the thread record passes the
+  // retrieval's query so each entry is identifiable.
+  readonly label?: string;
 }) {
   // Collapsed by default — this lives at the bottom of the answer as optional
   // "proof", not something the reader has to scroll past to get to the answer.
@@ -145,7 +149,9 @@ export function SupportSearchPanel({
         type="button"
       >
         <SearchCheckIcon className="size-3.5 shrink-0 text-clever-blue/60" />
-        <span className="font-medium text-clever-navy/70 text-xs">Show your work</span>
+        <span className="min-w-0 truncate font-medium text-clever-navy/70 text-xs">
+          {label ?? "Show your work"}
+        </span>
         <span className="ml-auto flex items-center gap-2">
           {turnTotal != null ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">

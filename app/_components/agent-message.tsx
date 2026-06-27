@@ -18,7 +18,6 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { isSupportSearchOutput, SupportSearchPanel } from "./support-search-panel";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -28,31 +27,25 @@ export type AgentInputResponse = {
 
 export function AgentMessage({
   canRespond,
-  inferenceCost,
   isStreaming,
   message,
   onInputResponses,
 }: {
   readonly canRespond: boolean;
-  // USD spent on the LLM call(s) for this message's turn (answer synthesis),
-  // surfaced in the trust panel's cost breakdown. Undefined when not available.
-  readonly inferenceCost?: number;
   readonly isStreaming: boolean;
   readonly message: EveMessage;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
   const isUser = message.role === "user";
-  // Completed support searches render as standalone trust panels BELOW the
-  // answer bubble (not inside it), so the panel reads as a quiet footnote rather
-  // than filling the message bubble with a big card.
-  const panelParts = message.parts.filter(isSearchPanelPart);
-  const bodyParts = message.parts.filter((part) => !isSearchPanelPart(part));
+  // All support-search rendering lives in the single ThreadWorkPanel pinned at
+  // the bottom of the thread, so search tool parts are excluded from the message.
+  const bodyParts = message.parts.filter((part) => !isSearchToolPart(part));
   const lastTextIndex = bodyParts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
     -1,
   );
-  // Whether the body actually renders anything — avoids an empty light-blue
-  // bubble when a turn is just a search (step-start/empty reasoning render null).
+  // Does the body actually render anything? Skip the whole message otherwise
+  // (e.g. a turn that was purely a search) — no empty bubble.
   const hasBody = bodyParts.some((part) => {
     if (part.type === "step-start") return false;
     if (part.type === "text") return Boolean(part.text?.trim());
@@ -60,63 +53,38 @@ export function AgentMessage({
     return true;
   });
 
+  if (!hasBody) return null;
+
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "flex max-w-[85%] flex-col gap-2 data-[optimistic=true]:opacity-70",
-          isUser ? "items-end" : "items-start",
+          "max-w-[85%] space-y-2 rounded-2xl px-5 py-3 text-sm data-[optimistic=true]:opacity-70",
+          isUser
+            ? "bg-clever-blue text-white"
+            : "border border-clever-light-blue bg-clever-light-blue/40 text-clever-black",
         )}
         data-optimistic={message.metadata?.optimistic ? "true" : undefined}
       >
-        {hasBody ? (
-          <div
-            className={cn(
-              "space-y-2 rounded-2xl px-5 py-3 text-sm",
-              isUser
-                ? "bg-clever-blue text-white"
-                : "border border-clever-light-blue bg-clever-light-blue/40 text-clever-black",
-            )}
-          >
-            {bodyParts.map((part, index) => (
-              <AgentMessagePart
-                canRespond={canRespond}
-                isUser={isUser}
-                key={partKey(part, index)}
-                onInputResponses={onInputResponses}
-                part={part}
-                showCaret={isStreaming && !isUser && index === lastTextIndex}
-              />
-            ))}
-          </div>
-        ) : null}
-        {!isUser && panelParts.length > 0 ? (
-          <div className="w-full space-y-2">
-            {panelParts.map((part, index) =>
-              isSupportSearchOutput(part.output) ? (
-                <SupportSearchPanel
-                  inferenceCost={index === 0 ? inferenceCost : undefined}
-                  key={partKey(part, index)}
-                  output={part.output}
-                />
-              ) : null,
-            )}
-          </div>
-        ) : null}
+        {bodyParts.map((part, index) => (
+          <AgentMessagePart
+            canRespond={canRespond}
+            isUser={isUser}
+            key={partKey(part, index)}
+            onInputResponses={onInputResponses}
+            part={part}
+            showCaret={isStreaming && !isUser && index === lastTextIndex}
+          />
+        ))}
       </div>
     </div>
   );
 }
 
-// Completed support searches get the branded trust panel (rendered at the
-// bottom); everything else — including an in-flight search — falls through to
-// the generic part renderer.
-function isSearchPanelPart(part: EveMessagePart): part is EveDynamicToolPart {
-  return (
-    part.type === "dynamic-tool" &&
-    part.toolName === "search_support" &&
-    isSupportSearchOutput(part.output)
-  );
+// Support-search tool parts (any state) are excluded from the message body and
+// surfaced only in the bottom ThreadWorkPanel.
+function isSearchToolPart(part: EveMessagePart): part is EveDynamicToolPart {
+  return part.type === "dynamic-tool" && part.toolName === "search_support";
 }
 
 function AgentMessagePart({
