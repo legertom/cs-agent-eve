@@ -1,13 +1,13 @@
 "use client";
 
 import { useEveAgent } from "eve/react";
-import { AlertCircleIcon, CheckIcon, CoinsIcon, Share2Icon } from "lucide-react";
+import { AlertCircleIcon, CheckIcon, Share2Icon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { priceInferenceUsage } from "@/lib/inference-cost";
 import { firstUserText } from "@/lib/shared-thread";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
-import { formatRetrievalUsd, retrievalCostTotal } from "./support-search-panel";
+import { retrievalCostTotal } from "./support-search-panel";
 
 const SUGGESTED_QUESTIONS = [
   "How do I set up Google SSO?",
@@ -167,19 +167,9 @@ export function AgentChat() {
         <div className="mx-auto max-w-3xl space-y-6">
           {isEmpty ? null : (
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-              {totalCost > 0 ? (
-                <span
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-clever-light-blue/30 px-3 py-1.5 text-clever-navy text-sm"
-                  title={`Thread spend via Vercel AI Gateway — answer (Claude): ${formatRetrievalUsd(inferenceCost)} · retrieval, ${retrievalCount} search${retrievalCount === 1 ? "" : "es"}: ${formatRetrievalUsd(threadCost)}`}
-                >
-                  <CoinsIcon className="size-3.5 text-clever-blue" />
-                  <span className="font-medium tabular-nums">{formatRetrievalUsd(totalCost)}</span>
-                  <span className="text-clever-black/40">· thread total</span>
-                </span>
-              ) : (
-                <span aria-hidden />
-              )}
+              {/* Per-turn cost lives discreetly inside each "Show your work"
+                  dropdown — no prominent thread-total chip in the toolbar. */}
+              <div className="flex items-center justify-end gap-2">
               <div className="flex items-center gap-2">
                 <button
                   aria-label="Share this conversation"
