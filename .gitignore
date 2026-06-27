@@ -9,3 +9,8 @@ node_modules
 dist
 .DS_Store
 *.tsbuildinfo
+
+# Local-only (not needed in repo)
+.claude
+.cache
+.playwright-mcp
