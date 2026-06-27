@@ -54,9 +54,23 @@ export function ThreadWorkPanel({
     const found: Retrieval[] = [];
     let retrieval = 0;
     let inference = 0;
+    // Inference is billed per TURN, but one turn can span multiple messages — a
+    // tool/search message plus a follow-up, or a human-in-the-loop input request
+    // ("which setup are you looking for?"). inferenceByMessageId stamps the turn's
+    // full cost on EACH of those messages, so we must add it once per turnId;
+    // summing per message double-counts the answer cost.
+    const countedTurns = new Set<string>();
     for (const message of messages) {
-      // Each message's turn inference counted once (a turn = one assistant message).
-      inference += inferenceByMessageId?.[message.id] ?? 0;
+      const turnId = message.metadata?.turnId;
+      const messageInference = inferenceByMessageId?.[message.id] ?? 0;
+      if (turnId) {
+        if (!countedTurns.has(turnId)) {
+          inference += messageInference;
+          countedTurns.add(turnId);
+        }
+      } else {
+        inference += messageInference;
+      }
       for (const part of message.parts) {
         if (
           part.type === "dynamic-tool" &&
