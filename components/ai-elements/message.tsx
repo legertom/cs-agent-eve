@@ -276,7 +276,10 @@ const streamdownPlugins = { cjk, code, math, mermaid };
 export const MessageResponse = memo(
   ({ className, ...props }: MessageResponseProps) => (
     <Streamdown
-      className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
+      // w-full, NOT size-full: h-full makes the text stretch to fill a taller
+      // flex parent (e.g. a bubble that also holds a tool card), leaving a big
+      // empty gap under short answers.
+      className={cn("w-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)}
       plugins={streamdownPlugins}
       {...props}
     />

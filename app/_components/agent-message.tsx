@@ -159,9 +159,20 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool":
+      // A human-in-the-loop input request renders as a clean prompt + choices,
+      // not the generic tool card with a raw-JSON "Parameters" dump.
+      if (part.toolMetadata?.eve?.inputRequest) {
+        return (
+          <InputRequestActions
+            canRespond={canRespond}
+            onInputResponses={onInputResponses}
+            part={part}
+          />
+        );
+      }
       // Completed support searches are pulled out and rendered as trust panels
-      // at the bottom of the message (see AgentMessage); an in-flight search
-      // still shows here as the generic tool card.
+      // at the bottom of the message (see AgentMessage); other/in-flight tools
+      // still show the generic tool card.
       return (
         <Tool
           defaultOpen={part.state === "approval-requested" || part.state === "approval-responded"}
