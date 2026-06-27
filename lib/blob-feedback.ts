@@ -1,4 +1,4 @@
-import { get, list, put } from "@vercel/blob";
+import { head, list, put } from "@vercel/blob";
 import type { FeedbackPayload, FeedbackSummary } from "./feedback";
 
 // Persistence for flagged ("log thread with feedback") threads, backed by the
@@ -30,9 +30,13 @@ export async function saveFeedback(payload: FeedbackPayload): Promise<string> {
 export async function loadFeedback(id: string): Promise<FeedbackPayload | null> {
   if (!ID_RE.test(id)) return null;
   try {
-    const result = await get(`${PREFIX}${id}.json`, { access: "public" });
-    if (!result || result.statusCode !== 200) return null;
-    return (await new Response(result.stream).json()) as FeedbackPayload;
+    // Resolve the blob's public URL via the API (token-auth), then fetch it.
+    // We avoid get({ access: "public" }) — it 403s when fetching public content
+    // on this store. head() + a plain fetch of the public URL is reliable.
+    const meta = await head(`${PREFIX}${id}.json`);
+    const res = await fetch(meta.url, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as FeedbackPayload;
   } catch {
     // Unknown id (BlobNotFoundError) or a transient read error → treat as 404.
     return null;
