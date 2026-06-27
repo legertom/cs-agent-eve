@@ -1,10 +1,12 @@
 "use client";
 
 import { useEveAgent } from "eve/react";
-import { AlertCircleIcon } from "lucide-react";
+import { AlertCircleIcon, CheckIcon, CoinsIcon, Share2Icon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
+import { firstUserText } from "@/lib/shared-thread";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
+import { formatRetrievalUsd, retrievalCostTotal } from "./support-search-panel";
 
 const SUGGESTED_QUESTIONS = [
   "How do I set up Google SSO?",
@@ -31,8 +33,26 @@ export function AgentChat() {
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
 
+  // Running cost across every retrieval in the thread, accumulated as the user
+  // asks follow-ups. Derived from the search_support tool outputs on each turn.
+  let threadCost = 0;
+  let retrievalCount = 0;
+  for (const message of agent.data.messages) {
+    for (const part of message.parts) {
+      if (part.type === "dynamic-tool" && part.toolName === "search_support") {
+        const total = retrievalCostTotal(part.output);
+        if (total != null) {
+          threadCost += total;
+          retrievalCount += 1;
+        }
+      }
+    }
+  }
+
   const [input, setInput] = useState("");
   const [persona, setPersona] = useState<string>("anyone");
+  const [shareState, setShareState] = useState<"idle" | "sharing" | "copied" | "error">("idle");
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,6 +94,42 @@ export function AgentChat() {
   function resetChat() {
     agent.reset();
     setInput("");
+    setShareState("idle");
+    setShareUrl(null);
+  }
+
+  // Snapshot the current thread to a shareable, read-only URL and copy it.
+  async function shareThread() {
+    if (isBusy || isEmpty || shareState === "sharing") return;
+    setShareState("sharing");
+    try {
+      const res = await fetch("/api/share", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messages: agent.data.messages,
+          persona,
+          title: firstUserText(agent.data.messages),
+          threadCost,
+          retrievalCount,
+        }),
+      });
+      if (!res.ok) throw new Error(`share failed: ${res.status}`);
+      const { path } = (await res.json()) as { path: string };
+      const url = `${window.location.origin}${path}`;
+      setShareUrl(url);
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        // Clipboard can be blocked (insecure context / permissions) — the link
+        // is still shown below the button so it can be copied manually.
+      }
+      setShareState("copied");
+      window.setTimeout(() => setShareState("idle"), 3000);
+    } catch {
+      setShareState("error");
+      window.setTimeout(() => setShareState("idle"), 3000);
+    }
   }
 
   return (
@@ -82,13 +138,49 @@ export function AgentChat() {
       <main className="flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-3xl space-y-6">
           {isEmpty ? null : (
-            <div className="flex justify-end">
-              <button
-                aria-label="Start a new conversation"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/50"
-                onClick={resetChat}
-                type="button"
-              >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+              {retrievalCount > 0 ? (
+                <span
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-clever-light-blue/30 px-3 py-1.5 text-clever-navy text-sm"
+                  title={`${retrievalCount} retrieval${retrievalCount === 1 ? "" : "s"} via Vercel AI Gateway this thread`}
+                >
+                  <CoinsIcon className="size-3.5 text-clever-blue" />
+                  <span className="font-medium tabular-nums">{formatRetrievalUsd(threadCost)}</span>
+                  <span className="text-clever-black/40">
+                    · {retrievalCount} retrieval{retrievalCount === 1 ? "" : "s"} this thread
+                  </span>
+                </span>
+              ) : (
+                <span aria-hidden />
+              )}
+              <div className="flex items-center gap-2">
+                <button
+                  aria-label="Share this conversation"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/50 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isBusy || shareState === "sharing"}
+                  onClick={shareThread}
+                  type="button"
+                >
+                  {shareState === "copied" ? (
+                    <CheckIcon className="size-3.5 text-clever-green" />
+                  ) : (
+                    <Share2Icon className="size-3.5" />
+                  )}
+                  {shareState === "sharing"
+                    ? "Sharing…"
+                    : shareState === "copied"
+                      ? "Link copied"
+                      : shareState === "error"
+                        ? "Try again"
+                        : "Share"}
+                </button>
+                <button
+                  aria-label="Start a new conversation"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/50"
+                  onClick={resetChat}
+                  type="button"
+                >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path
                     d="M13.5 8a5.5 5.5 0 0 1-9.27 4.01l-.03-.03"
@@ -118,7 +210,17 @@ export function AgentChat() {
                   />
                 </svg>
                 New chat
-              </button>
+                </button>
+              </div>
+              </div>
+              {shareUrl && shareState === "copied" ? (
+                <p className="truncate text-center text-clever-black/40 text-xs">
+                  Shareable link:{" "}
+                  <a className="text-clever-blue underline" href={shareUrl}>
+                    {shareUrl}
+                  </a>
+                </p>
+              ) : null}
             </div>
           )}
           {isEmpty ? (

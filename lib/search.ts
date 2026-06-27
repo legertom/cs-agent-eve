@@ -33,6 +33,12 @@ const RERANK_CANDIDATES = 20; // how many hybrid hits to rerank
 const RERANK_DOC_CHARS = 4000; // context per doc given to the reranker
 const RRF_K = 60; // standard RRF constant
 
+// Approximate AI Gateway list prices (USD) for the retrieval models, used to
+// surface a per-search cost in the "Show your work" panel. AI Gateway passes
+// provider list price through at zero markup; update these if the models change.
+const EMBED_USD_PER_1M_TOKENS = 0.02; // openai/text-embedding-3-small
+const RERANK_USD_PER_SEARCH = 0.002; // cohere rerank — one query vs ≤100 docs
+
 // --- Text normalization + tokenization (shared by query + index) ---
 const STOP = new Set(
   "the a an and or of to in for on is are be with how do i my you your can what when where why this that it as at from by".split(
@@ -149,6 +155,7 @@ async function rerankCandidates(query: string, candidates: number[]): Promise<Re
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
 // Calibrated band from the reranker's top relevance score (Cohere v4 → 0–1).
 function confidenceLevel(top: number | null): "high" | "medium" | "low" | "unscored" {
@@ -182,6 +189,19 @@ export type SearchResultItem = {
   audience: string;
 };
 
+// What this single retrieval cost to run through AI Gateway, itemized by stage
+// so the "Show your work" panel can display a transparent breakdown and the UI
+// can sum a running total across the thread.
+export type RetrievalCost = {
+  total: number; // USD, embedding + rerank
+  embedding: number; // USD, query embedding
+  rerank: number; // USD, cross-encoder rerank
+  // Raw usage behind the numbers, so the panel can show "8 tok" / "20 docs".
+  embeddingTokens: number;
+  rerankDocs: number;
+  models: { embedding: string; rerank: string };
+};
+
 export type SearchResponse =
   | {
       query: string;
@@ -193,6 +213,7 @@ export type SearchResponse =
         margin: number | null;
         scored: boolean;
       };
+      cost: RetrievalCost;
       results: SearchResultItem[];
     }
   | { error: string };
@@ -207,12 +228,14 @@ export async function searchSupport(query: string, limit?: number): Promise<Sear
   const lexical = bm25Ranking(query);
 
   let semantic: number[] = [];
+  let embeddingTokens = 0;
   try {
-    const { embedding } = await embed({
+    const { embedding, usage } = await embed({
       model: gateway.textEmbeddingModel(EMBED_MODEL),
       value: normalize(query),
       providerOptions: { openai: { dimensions: EMBED_DIMS } },
     });
+    embeddingTokens = usage.tokens;
     semantic = semanticRanking(embedding);
   } catch {
     // If embeddings are unavailable, fall back to lexical only.
@@ -246,6 +269,21 @@ export async function searchSupport(query: string, limit?: number): Promise<Sear
   const margin = topScore != null && secondScore != null ? round3(topScore - secondScore) : null;
   const scored = scores.size > 0;
 
+  // Itemize what this retrieval cost: embedding is per-token, reranking is
+  // billed per search (one query against up to 100 docs). Stages that fell back
+  // (no embedding / no rerank) contribute $0.
+  const rerankDocs = didRerank ? candidates.length : 0;
+  const embeddingCost = (embeddingTokens / 1_000_000) * EMBED_USD_PER_1M_TOKENS;
+  const rerankCost = rerankDocs > 0 ? Math.ceil(rerankDocs / 100) * RERANK_USD_PER_SEARCH : 0;
+  const cost: RetrievalCost = {
+    total: round6(embeddingCost + rerankCost),
+    embedding: round6(embeddingCost),
+    rerank: round6(rerankCost),
+    embeddingTokens,
+    rerankDocs,
+    models: { embedding: EMBED_MODEL, rerank: RERANK_MODEL },
+  };
+
   return {
     query,
     count: final.length,
@@ -256,6 +294,7 @@ export async function searchSupport(query: string, limit?: number): Promise<Sear
       margin,
       scored,
     },
+    cost,
     results,
   };
 }

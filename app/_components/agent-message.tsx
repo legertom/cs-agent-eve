@@ -38,7 +38,11 @@ export function AgentMessage({
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
 }) {
   const isUser = message.role === "user";
-  const lastTextIndex = message.parts.reduce(
+  // Completed support searches render as collapsed trust panels at the very
+  // bottom of the message — after the answer — rather than inline above it.
+  const panelParts = message.parts.filter(isSearchPanelPart);
+  const bodyParts = message.parts.filter((part) => !isSearchPanelPart(part));
+  const lastTextIndex = bodyParts.reduce(
     (last, part, index) => (part.type === "text" ? index : last),
     -1,
   );
@@ -56,7 +60,7 @@ export function AgentMessage({
             : "border border-clever-light-blue bg-clever-light-blue/40 text-clever-black",
         )}
       >
-        {message.parts.map((part, index) => (
+        {bodyParts.map((part, index) => (
           <AgentMessagePart
             canRespond={canRespond}
             isUser={isUser}
@@ -66,8 +70,28 @@ export function AgentMessage({
             showCaret={isStreaming && !isUser && index === lastTextIndex}
           />
         ))}
+        {panelParts.length > 0 ? (
+          <div className="space-y-2 pt-1">
+            {panelParts.map((part, index) =>
+              isSupportSearchOutput(part.output) ? (
+                <SupportSearchPanel key={partKey(part, index)} output={part.output} />
+              ) : null,
+            )}
+          </div>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+// Completed support searches get the branded trust panel (rendered at the
+// bottom); everything else — including an in-flight search — falls through to
+// the generic part renderer.
+function isSearchPanelPart(part: EveMessagePart): part is EveDynamicToolPart {
+  return (
+    part.type === "dynamic-tool" &&
+    part.toolName === "search_support" &&
+    isSupportSearchOutput(part.output)
   );
 }
 
@@ -106,11 +130,9 @@ function AgentMessagePart({
     case "authorization":
       return <AuthorizationPrompt part={part} />;
     case "dynamic-tool":
-      // Render the branded "Show your work" trust panel for support searches
-      // instead of the generic JSON tool card.
-      if (part.toolName === "search_support" && isSupportSearchOutput(part.output)) {
-        return <SupportSearchPanel output={part.output} />;
-      }
+      // Completed support searches are pulled out and rendered as trust panels
+      // at the bottom of the message (see AgentMessage); an in-flight search
+      // still shows here as the generic tool card.
       return (
         <Tool
           defaultOpen={part.state === "approval-requested" || part.state === "approval-responded"}
