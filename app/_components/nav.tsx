@@ -31,6 +31,12 @@ export function Nav() {
             Browse
           </Link>
           <Link
+            href="/inquiries"
+            className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
+          >
+            Inquiries
+          </Link>
+          <Link
             href="/feedback"
             className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
           >
