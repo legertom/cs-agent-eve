@@ -1,11 +1,20 @@
-import { CoinsIcon, MessageSquareIcon, SearchCheckIcon, ShieldAlertIcon } from "lucide-react";
+import {
+  CoinsIcon,
+  MessageSquareIcon,
+  PencilIcon,
+  SearchCheckIcon,
+  ShieldAlertIcon,
+  ThumbsDownIcon,
+  ThumbsUpIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import Link from "next/link";
-import { formatFeedbackDate, formatUsd } from "@/lib/feedback";
+import { formatFeedbackDate, formatUsd, reasonBadgeClass, reasonLabel } from "@/lib/feedback";
 import {
   type InquiryAnalytics,
   type InquirySummary,
   inquiryAnalytics,
-  listInquiries,
+  listInquiriesWithSignals,
 } from "@/lib/inquiry-store";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +27,7 @@ export const metadata = {
 };
 
 export default async function InquiriesPage() {
-  const [items, stats] = await Promise.all([listInquiries(), inquiryAnalytics()]);
+  const [items, stats] = await Promise.all([listInquiriesWithSignals(), inquiryAnalytics()]);
 
   return (
     <main className="bg-white text-clever-black">
@@ -104,6 +113,7 @@ function InquiryRow({ item }: { readonly item: InquirySummary }) {
       {item.answer ? (
         <p className="line-clamp-2 text-clever-black/55 text-sm">{item.answer}</p>
       ) : null}
+      <SignalChips item={item} />
       <div className="flex flex-wrap items-center gap-x-2 text-clever-black/40 text-xs">
         <span>{formatFeedbackDate(item.createdAt)}</span>
         <span>· {channelLabel(item.channel)}</span>
@@ -116,6 +126,80 @@ function InquiryRow({ item }: { readonly item: InquirySummary }) {
         {item.searchCount > 0 ? <span>· {item.topConfidence} confidence</span> : null}
       </div>
     </li>
+  );
+}
+
+// Per-row presence chips (§4.D-min): judge hallucination flag + groundedness/
+// relevance score when scored, and human 👍/👎/✎ signals from answer_feedback.
+// Renders nothing when a row has no judge or human signal ("no signal").
+function SignalChips({ item }: { readonly item: InquirySummary }) {
+  const up = item.up ?? 0;
+  const down = item.down ?? 0;
+  const edits = item.edits ?? 0;
+  const hasHuman = up > 0 || down > 0 || edits > 0;
+  const hasJudge = Boolean(item.judged);
+  if (!hasHuman && !hasJudge) return null;
+
+  const pct = (n: number | null | undefined) => (n == null ? "—" : `${Math.round(n * 100)}%`);
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {item.judgeHallucination ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-clever-orange/50 bg-clever-orange/10 px-2 py-0.5 font-medium text-[10px] text-clever-orange"
+          title="The judge flagged unsupported claims (possible hallucination)"
+        >
+          <TriangleAlertIcon className="size-3" />
+          hallucination
+        </span>
+      ) : null}
+      {hasJudge ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-clever-light-blue bg-clever-light-blue/30 px-2 py-0.5 font-medium text-[10px] text-clever-navy/70 tabular-nums"
+          title="Judge scores — groundedness is a weak signal (sources are titles/URLs only)"
+        >
+          G {pct(item.judgeGroundedness)} · R {pct(item.judgeRelevance)}
+        </span>
+      ) : null}
+      {up > 0 ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-clever-blue/30 bg-clever-blue/10 px-2 py-0.5 font-medium text-[10px] text-clever-blue tabular-nums"
+          title="Thumbs up"
+        >
+          <ThumbsUpIcon className="size-3" />
+          {up}
+        </span>
+      ) : null}
+      {down > 0 ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-clever-orange/50 bg-clever-orange/10 px-2 py-0.5 font-medium text-[10px] text-clever-orange tabular-nums"
+          title="Thumbs down"
+        >
+          <ThumbsDownIcon className="size-3" />
+          {down}
+        </span>
+      ) : null}
+      {item.downReason ? (
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full border px-2 py-0.5 font-medium text-[10px]",
+            reasonBadgeClass(item.downReason),
+          )}
+          title="Most recent 👎 reason"
+        >
+          {reasonLabel(item.downReason)}
+        </span>
+      ) : null}
+      {edits > 0 ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-full border border-clever-green/40 bg-clever-green/10 px-2 py-0.5 font-medium text-[10px] text-clever-green tabular-nums"
+          title="Expert correction submitted"
+        >
+          <PencilIcon className="size-3" />
+          {edits}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -146,6 +230,54 @@ function AnalyticsDashboard({ stats }: { readonly stats: InquiryAnalytics }) {
         />
         <Stat label="No-search turns" value={String(stats.noSearchCount)} />
       </div>
+
+      {stats.judgedCount > 0 ||
+      stats.thumbsUpCount > 0 ||
+      stats.thumbsDownCount > 0 ||
+      stats.expertEditCount > 0 ? (
+        <div className="space-y-2">
+          <p className="font-medium text-clever-black/40 text-xs uppercase tracking-wide">
+            Eval signals
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {/* Judge tiles only once something has actually been scored — otherwise
+                "Avg grounded 0%" would read as "ungrounded" rather than "unjudged". */}
+            {stats.judgedCount > 0 ? (
+              <>
+                <Stat label="Judged" value={String(stats.judgedCount)} />
+                <Stat label="Avg grounded" value={`${Math.round(stats.avgGroundedness * 100)}%`} />
+                <Stat label="Avg relevance" value={`${Math.round(stats.avgRelevance * 100)}%`} />
+                <Stat
+                  accent={stats.hallucinationCount > 0}
+                  label="Hallucinations"
+                  value={String(stats.hallucinationCount)}
+                />
+              </>
+            ) : null}
+            <Stat
+              icon={<ThumbsUpIcon className="size-3 text-clever-blue/60" />}
+              label="Thumbs up"
+              value={String(stats.thumbsUpCount)}
+            />
+            <Stat
+              accent={stats.thumbsDownCount > 0}
+              icon={<ThumbsDownIcon className="size-3 text-clever-orange/70" />}
+              label="Thumbs down"
+              value={String(stats.thumbsDownCount)}
+            />
+            <Stat
+              icon={<PencilIcon className="size-3 text-clever-green/70" />}
+              label="Expert edits"
+              value={String(stats.expertEditCount)}
+            />
+          </div>
+          {stats.judgedCount > 0 ? (
+            <p className="text-clever-black/40 text-xs">
+              Groundedness is a weak signal — the judge sees source titles + URLs, not article bodies.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       {stats.byChannel.length > 0 ? (
         <div className="space-y-1.5">

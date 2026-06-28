@@ -1,3 +1,4 @@
+import { ensureAnswerFeedbackSchema } from "./answer-feedback-store";
 import { getSql } from "./db";
 
 // Persistence for EVERY agent turn (not just flagged ones), backed by Neon
@@ -49,6 +50,8 @@ export type InquiryRecord = {
 };
 
 // Slim row for the dashboard list — avoids shipping every full answer body.
+// Judge + human-signal fields are optional: they're only populated by
+// listInquiriesWithSignals (the dashboard query), not by listInquiries.
 export type InquirySummary = {
   readonly sessionId: string;
   readonly turnId: string;
@@ -59,6 +62,40 @@ export type InquirySummary = {
   readonly searchCount: number;
   readonly topConfidence: string;
   readonly totalCost: number;
+  // Judge signals (C) — null/undefined until the row has been scored.
+  readonly judged?: boolean;
+  readonly judgeGroundedness?: number | null;
+  readonly judgeRelevance?: number | null;
+  readonly judgeHallucination?: boolean | null;
+  // Human signals (A/B) rolled up from answer_feedback on (session_id, turn_id).
+  readonly up?: number;
+  readonly down?: number;
+  readonly edits?: number;
+  readonly downReason?: string | null;
+};
+
+// One inquiry the judge still needs to score (the batch route's work item). The
+// only grounding material the stored payload has is the source titles + URLs —
+// there is NO article body/excerpt anywhere in the payload.
+export type UnjudgedInquiry = {
+  readonly sessionId: string;
+  readonly turnId: string;
+  readonly question: string;
+  readonly answer: string;
+  readonly sources: ReadonlyArray<{
+    readonly rank?: number;
+    readonly title?: string;
+    readonly url?: string;
+  }>;
+};
+
+// The judge's verdict for one inquiry, persisted onto the inquiry row.
+export type InquiryJudgment = {
+  readonly groundedness: number; // 0..1
+  readonly relevance: number; // 0..1
+  readonly hallucination: boolean;
+  readonly verdict: string;
+  readonly model: string;
 };
 
 // Roll-up for the analytics dashboard — "how many inquiries, what do they cost,
@@ -73,6 +110,15 @@ export type InquiryAnalytics = {
   // Turns that answered with no search at all (clarifying questions, or ungrounded).
   readonly noSearchCount: number;
   readonly byChannel: ReadonlyArray<{ readonly channel: string; readonly count: number }>;
+  // Eval signals (C). Judge aggregates are over JUDGED rows; human aggregates are
+  // counts of answer_feedback rows. All zero until judging/feedback happen.
+  readonly judgedCount: number;
+  readonly avgGroundedness: number;
+  readonly avgRelevance: number;
+  readonly hallucinationCount: number;
+  readonly thumbsUpCount: number;
+  readonly thumbsDownCount: number;
+  readonly expertEditCount: number;
 };
 
 const CONFIDENCE_RANK: Record<string, number> = { high: 3, medium: 2, low: 1, unscored: 0 };
@@ -112,6 +158,17 @@ function ensureSchema(): Promise<void> {
       `;
       await sql`CREATE INDEX IF NOT EXISTS inquiries_created_at_idx ON inquiries (created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS inquiries_channel_idx ON inquiries (channel)`;
+      // LLM-as-judge auto-eval columns (C). Added idempotently with ADD COLUMN IF
+      // NOT EXISTS so this same memoized ensureSchema() — which logInquiry() also
+      // awaits — stays safe to re-run and never blocks turn logging.
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_groundedness double precision`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_relevance double precision`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_hallucination boolean`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_verdict text`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_model text`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judged_at timestamptz`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_attempts integer NOT NULL DEFAULT 0`;
+      await sql`CREATE INDEX IF NOT EXISTS inquiries_judged_at_idx ON inquiries (judged_at DESC) WHERE judged_at IS NOT NULL`;
     })().catch((err) => {
       schemaReady = null; // don't cache a failed init
       throw err;
@@ -181,8 +238,9 @@ export async function listInquiries(limit = 100): Promise<InquirySummary[]> {
 export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
   try {
     await ensureSchema();
+    await ensureAnswerFeedbackSchema();
     const sql = getSql();
-    const [totals, byChannel] = await Promise.all([
+    const [totals, byChannel, judge, human] = await Promise.all([
       sql`
         SELECT
           COUNT(*)::int AS total,
@@ -194,8 +252,25 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
         FROM inquiries
       `,
       sql`SELECT channel, COUNT(*)::int AS count FROM inquiries GROUP BY channel ORDER BY count DESC`,
+      sql`
+        SELECT
+          COUNT(*) FILTER (WHERE judged_at IS NOT NULL)::int AS judged,
+          COALESCE(AVG(judge_groundedness) FILTER (WHERE judged_at IS NOT NULL), 0)::float8 AS avg_g,
+          COALESCE(AVG(judge_relevance) FILTER (WHERE judged_at IS NOT NULL), 0)::float8 AS avg_r,
+          COUNT(*) FILTER (WHERE judge_hallucination)::int AS halluc
+        FROM inquiries
+      `,
+      sql`
+        SELECT
+          COUNT(*) FILTER (WHERE kind = 'up')::int   AS up,
+          COUNT(*) FILTER (WHERE kind = 'down')::int AS down,
+          COUNT(*) FILTER (WHERE kind = 'edit')::int AS edits
+        FROM answer_feedback
+      `,
     ]);
     const t = (totals as Array<Record<string, number>>)[0] ?? {};
+    const j = (judge as Array<Record<string, number>>)[0] ?? {};
+    const h = (human as Array<Record<string, number>>)[0] ?? {};
     return {
       total: t.total ?? 0,
       last7Days: t.last7 ?? 0,
@@ -207,6 +282,13 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
         channel: r.channel || "unknown",
         count: r.count,
       })),
+      judgedCount: j.judged ?? 0,
+      avgGroundedness: j.avg_g ?? 0,
+      avgRelevance: j.avg_r ?? 0,
+      hallucinationCount: j.halluc ?? 0,
+      thumbsUpCount: h.up ?? 0,
+      thumbsDownCount: h.down ?? 0,
+      expertEditCount: h.edits ?? 0,
     };
   } catch {
     return {
@@ -217,6 +299,159 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
       lowConfidenceCount: 0,
       noSearchCount: 0,
       byChannel: [],
+      judgedCount: 0,
+      avgGroundedness: 0,
+      avgRelevance: 0,
+      hallucinationCount: 0,
+      thumbsUpCount: 0,
+      thumbsDownCount: 0,
+      expertEditCount: 0,
     };
+  }
+}
+
+// --- LLM-as-judge auto-eval (C) ---
+
+// Rows the judge still needs to score. Poison-row guard: skip rows that already
+// failed 3 times (judge_attempts) so a malformed answer isn't re-billed forever,
+// and skip clarifying-only turns (search_count = 0) — there's nothing to ground.
+export async function selectUnjudgedInquiries(limit = 20): Promise<UnjudgedInquiry[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const rows = (await sql`
+    SELECT session_id, turn_id, question, answer, payload
+    FROM inquiries
+    WHERE judged_at IS NULL AND judge_attempts < 3 AND search_count > 0
+    ORDER BY created_at ASC
+    LIMIT ${limit}
+  `) as Array<{
+    session_id: string;
+    turn_id: string;
+    question: string;
+    answer: string;
+    payload: { searches?: Array<{ sources?: Array<{ rank?: number; title?: string; url?: string }> }> };
+  }>;
+  return rows.map((r) => {
+    const sources: Array<{ rank?: number; title?: string; url?: string }> = [];
+    for (const search of r.payload?.searches ?? []) {
+      for (const src of search?.sources ?? []) {
+        sources.push({ rank: src?.rank, title: src?.title, url: src?.url });
+      }
+    }
+    return {
+      sessionId: r.session_id,
+      turnId: r.turn_id,
+      question: r.question,
+      answer: r.answer,
+      sources,
+    };
+  });
+}
+
+// Persist a successful judgment. Plain UPDATE guarded by the batch SELECT's
+// `judged_at IS NULL` so a second run never re-scores (and never re-bills) a row.
+export async function updateInquiryJudgment(
+  sessionId: string,
+  turnId: string,
+  j: InquiryJudgment,
+): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE inquiries SET
+      judge_groundedness  = ${j.groundedness},
+      judge_relevance     = ${j.relevance},
+      judge_hallucination = ${j.hallucination},
+      judge_verdict       = ${j.verdict.slice(0, 280)},
+      judge_model         = ${j.model},
+      judged_at           = now()
+    WHERE session_id = ${sessionId} AND turn_id = ${turnId}
+  `;
+}
+
+// Poison-row guard: on judge/parse failure bump judge_attempts and leave a
+// marker, but keep judged_at NULL until attempts are exhausted (then the batch
+// SELECT stops picking it). Never re-bills a successfully judged row.
+export async function markInquiryJudgeFailure(
+  sessionId: string,
+  turnId: string,
+  reason: string,
+): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE inquiries SET
+      judge_attempts = judge_attempts + 1,
+      judge_verdict  = ${`error: ${reason}`.slice(0, 280)}
+    WHERE session_id = ${sessionId} AND turn_id = ${turnId}
+  `;
+}
+
+// Dashboard list with both judge columns and human-feedback signals, via a
+// race-tolerant LEFT JOIN on (session_id, turn_id): an inquiry with no
+// answer_feedback renders "no signal" (counts 0), and answer_feedback rows with
+// no matching inquiry simply don't appear here. Ensures BOTH tables exist first.
+export async function listInquiriesWithSignals(limit = 100): Promise<InquirySummary[]> {
+  try {
+    await ensureSchema();
+    await ensureAnswerFeedbackSchema();
+    const sql = getSql();
+    const rows = (await sql`
+      SELECT i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
+             i.search_count, i.top_confidence, i.total_cost,
+             i.judge_groundedness, i.judge_relevance, i.judge_hallucination, i.judged_at,
+             COUNT(*) FILTER (WHERE af.kind = 'up')::int   AS up,
+             COUNT(*) FILTER (WHERE af.kind = 'down')::int AS down,
+             COUNT(*) FILTER (WHERE af.kind = 'edit')::int AS edits,
+             (ARRAY_AGG(af.reason ORDER BY af.created_at DESC)
+                FILTER (WHERE af.kind = 'down' AND af.reason IS NOT NULL))[1] AS down_reason
+      FROM inquiries i
+      LEFT JOIN answer_feedback af
+        ON af.session_id = i.session_id AND af.turn_id = i.turn_id
+      GROUP BY i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
+               i.search_count, i.top_confidence, i.total_cost,
+               i.judge_groundedness, i.judge_relevance, i.judge_hallucination, i.judged_at
+      ORDER BY i.created_at DESC
+      LIMIT ${limit}
+    `) as Array<{
+      session_id: string;
+      turn_id: string;
+      created_at: string;
+      channel: string;
+      question: string;
+      answer: string;
+      search_count: number;
+      top_confidence: string;
+      total_cost: number;
+      judge_groundedness: number | null;
+      judge_relevance: number | null;
+      judge_hallucination: boolean | null;
+      judged_at: string | null;
+      up: number;
+      down: number;
+      edits: number;
+      down_reason: string | null;
+    }>;
+    return rows.map((r) => ({
+      sessionId: r.session_id,
+      turnId: r.turn_id,
+      createdAt: new Date(r.created_at).toISOString(),
+      channel: r.channel,
+      question: r.question,
+      answer: r.answer,
+      searchCount: r.search_count,
+      topConfidence: r.top_confidence,
+      totalCost: r.total_cost,
+      judged: r.judged_at != null,
+      judgeGroundedness: r.judge_groundedness,
+      judgeRelevance: r.judge_relevance,
+      judgeHallucination: r.judge_hallucination,
+      up: r.up,
+      down: r.down,
+      edits: r.edits,
+      downReason: r.down_reason,
+    }));
+  } catch {
+    return [];
   }
 }
