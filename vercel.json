@@ -12,5 +12,11 @@
       "framework": "eve",
       "routePrefix": "/_eve_internal/eve"
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/judge/batch",
+      "schedule": "*/10 * * * *"
+    }
+  ]
 }
