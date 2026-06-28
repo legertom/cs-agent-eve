@@ -1,5 +1,6 @@
 "use client";
 
+import type { EveMessage } from "eve/react";
 import { useEveAgent } from "eve/react";
 import { AlertCircleIcon, CheckIcon, FlagIcon, Share2Icon } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
@@ -31,10 +32,33 @@ const PERSONAS = [
 
 const PERSONA_STORAGE_KEY = "clever-persona";
 
+// The user's question for an assistant message at `index`: the nearest preceding
+// user message's text. Passed to the feedback footer so a 👎/edit carries the
+// question it was answering (the assistant message itself doesn't hold it).
+function precedingUserQuestion(messages: readonly EveMessage[], index: number): string {
+  for (let i = index; i >= 0; i -= 1) {
+    const message = messages[i];
+    if (message.role !== "user") continue;
+    const text = message.parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join(" ")
+      .trim();
+    if (text) return text.slice(0, 2000);
+  }
+  return "";
+}
+
 export function AgentChat() {
   const agent = useEveAgent();
   const isBusy = agent.status === "submitted" || agent.status === "streaming";
   const isEmpty = agent.data.messages.length === 0;
+
+  // The eve server session id, populated after the first turn completes (the
+  // client stores it from the message-POST response / EVE_SESSION_ID_HEADER). It
+  // equals the hook's ctx.session.id, so passing it down lets per-answer feedback
+  // join to the logged inquiry by (sessionId, turnId). Undefined before any turn —
+  // the footer only renders on completed assistant answers, by which point it's set.
+  const sessionId = agent.session.sessionId;
 
   // Running cost across every retrieval in the thread, accumulated as the user
   // asks follow-ups. Derived from the search_support tool outputs on each turn.
@@ -320,6 +344,9 @@ export function AgentChat() {
               key={message.id}
               message={message}
               onInputResponses={(inputResponses) => agent.send({ inputResponses })}
+              persona={persona}
+              question={precedingUserQuestion(agent.data.messages, index)}
+              sessionId={sessionId}
             />
           ))}
 

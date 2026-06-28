@@ -18,6 +18,7 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { AnswerFeedbackControls } from "./answer-feedback";
 
 export type AgentInputResponse = {
   readonly optionId?: string;
@@ -30,11 +31,21 @@ export function AgentMessage({
   isStreaming,
   message,
   onInputResponses,
+  persona,
+  question,
+  sessionId,
 }: {
   readonly canRespond: boolean;
   readonly isStreaming: boolean;
   readonly message: EveMessage;
   readonly onInputResponses: (responses: readonly AgentInputResponse[]) => void | Promise<void>;
+  // Answer-level feedback context — supplied by AgentChat. `sessionId` is the eve
+  // server session id (agent.session.sessionId); paired with the message's turn
+  // id it joins each feedback row to the logged inquiry. Optional so read-only
+  // views (shared transcripts, the flag detail page) can render without them.
+  readonly persona?: string;
+  readonly question?: string;
+  readonly sessionId?: string;
 }) {
   const isUser = message.role === "user";
   // All support-search rendering lives in the single ThreadWorkPanel pinned at
@@ -55,8 +66,18 @@ export function AgentMessage({
 
   if (!hasBody) return null;
 
+  // The assistant's answer text (its renderable text parts), used as the original
+  // answer for the feedback footer and the prefill for an expert inline edit.
+  const answerText = assistantAnswerText(bodyParts);
+  // The eve turn id this message belongs to — pairs with sessionId to correlate
+  // feedback back to the logged inquiry. Same turn id the cost itemization uses.
+  const turnId = message.metadata?.turnId;
+  // Show the per-answer feedback footer only on a completed assistant answer that
+  // we can actually correlate (sessionId + turnId present, no longer streaming).
+  const showFeedback = !isUser && !isStreaming && Boolean(sessionId) && Boolean(turnId);
+
   return (
-    <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex flex-col gap-1.5", isUser ? "items-end" : "items-start")}>
       <div
         className={cn(
           "max-w-[85%] space-y-2 rounded-2xl px-5 py-3 text-sm data-[optimistic=true]:opacity-70",
@@ -77,8 +98,28 @@ export function AgentMessage({
           />
         ))}
       </div>
+      {showFeedback && sessionId && turnId ? (
+        <AnswerFeedbackControls
+          messageId={message.id}
+          originalAnswer={answerText}
+          persona={persona ?? "anyone"}
+          question={question ?? ""}
+          sessionId={sessionId}
+          turnId={turnId}
+        />
+      ) : null}
     </div>
   );
+}
+
+// The assistant's answer as plain text — the renderable text parts joined. Used
+// as the "original answer" snapshot and the inline-edit prefill.
+function assistantAnswerText(parts: readonly EveMessagePart[]): string {
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part.type === "text" && part.text.trim()) out.push(part.text);
+  }
+  return out.join("\n\n").trim();
 }
 
 // Support-search tool parts (any state) are excluded from the message body and
