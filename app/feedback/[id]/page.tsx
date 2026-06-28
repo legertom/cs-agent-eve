@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { cache } from "react";
 import { FeedbackDetail } from "@/app/_components/feedback-detail";
-import { loadFeedback } from "@/lib/blob-feedback";
+import { loadFeedback } from "@/lib/feedback-store";
 import { reasonLabel } from "@/lib/feedback";
 
 // Flag records are read on demand and are short-lived in cache; never prerender.

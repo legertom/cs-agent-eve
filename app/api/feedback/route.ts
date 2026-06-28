@@ -1,6 +1,6 @@
 import { BlobServiceRateLimited } from "@vercel/blob";
 import { NextResponse } from "next/server";
-import { saveFeedback } from "@/lib/blob-feedback";
+import { saveFeedback } from "@/lib/feedback-store";
 import {
   type FeedbackPayload,
   isFeedbackReason,

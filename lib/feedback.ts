@@ -45,6 +45,16 @@ export function reasonBadgeClass(id: string): string {
   }
 }
 
+// Server-safe USD formatter (mirrors formatRetrievalUsd, which lives in a
+// "use client" module and can't be called from a server component).
+export function formatUsd(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (n === 0) return "$0";
+  if (n < 0.0001) return "<$0.0001";
+  if (n < 1) return `$${n.toFixed(4)}`;
+  return `$${n.toFixed(2)}`;
+}
+
 // Deterministic date format (fixed to UTC) so server and client render the same
 // string — avoids hydration mismatches on the review pages.
 export function formatFeedbackDate(iso: string): string {
@@ -100,6 +110,23 @@ export type FeedbackSummary = {
   readonly note: string;
   readonly reporter?: string;
   readonly retrievalCount: number;
+  // Highest retrieval confidence seen in the thread (high/medium/low/unscored) —
+  // a low value next to a hallucination flag is the classic "answered anyway".
+  readonly topConfidence?: string;
+};
+
+// Aggregates for the review dashboard — answers "what's going wrong, how often,
+// and how much is it costing us?" across all flagged threads.
+export type FeedbackAnalytics = {
+  readonly total: number;
+  readonly last7Days: number;
+  readonly totalCost: number;
+  readonly avgCost: number;
+  // Flags whose best retrieval was low/unscored confidence — the bot answered
+  // without strong grounding. The most actionable bucket.
+  readonly lowConfidenceCount: number;
+  readonly byReason: ReadonlyArray<{ readonly reason: string; readonly count: number }>;
+  readonly topReporters: ReadonlyArray<{ readonly reporter: string; readonly count: number }>;
 };
 
 // Bounds for the public, unauthenticated flag endpoint — one thread, not a dump.

@@ -1,7 +1,13 @@
-import { FlagIcon, SearchCheckIcon } from "lucide-react";
+import { CoinsIcon, FlagIcon, SearchCheckIcon, ShieldAlertIcon } from "lucide-react";
 import Link from "next/link";
-import { listFeedback } from "@/lib/blob-feedback";
-import { formatFeedbackDate, reasonBadgeClass, reasonLabel } from "@/lib/feedback";
+import { feedbackAnalytics, listFeedback } from "@/lib/feedback-store";
+import {
+  type FeedbackAnalytics,
+  formatFeedbackDate,
+  formatUsd,
+  reasonBadgeClass,
+  reasonLabel,
+} from "@/lib/feedback";
 import { cn } from "@/lib/utils";
 
 // The team's review queue reflects flags as they land; always render fresh.
@@ -13,7 +19,8 @@ export const metadata = {
 };
 
 export default async function FeedbackPage() {
-  const items = await listFeedback();
+  // Run the list + the dashboard roll-up concurrently.
+  const [items, stats] = await Promise.all([listFeedback(), feedbackAnalytics()]);
 
   return (
     <main className="bg-white text-clever-black">
@@ -39,8 +46,10 @@ export default async function FeedbackPage() {
       </section>
 
       <section className="px-6 pb-16">
-        <div className="mx-auto max-w-3xl">
-          <p className="mb-3 text-clever-black/40 text-sm">
+        <div className="mx-auto max-w-3xl space-y-6">
+          {stats.total > 0 ? <AnalyticsDashboard stats={stats} /> : null}
+
+          <p className="text-clever-black/40 text-sm">
             {items.length} {items.length === 1 ? "flagged thread" : "flagged threads"}
           </p>
 
@@ -79,6 +88,15 @@ export default async function FeedbackPage() {
                       <span className="min-w-0 flex-1 truncate font-medium text-clever-navy text-sm">
                         {item.title}
                       </span>
+                      {item.topConfidence === "low" || item.topConfidence === "unscored" ? (
+                        <span
+                          className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clever-orange/10 px-2 py-0.5 font-medium text-[10px] text-clever-orange"
+                          title="The best retrieval for this thread was weakly grounded"
+                        >
+                          <ShieldAlertIcon className="size-3" />
+                          low confidence
+                        </span>
+                      ) : null}
                     </div>
                     {item.note ? (
                       <p className="line-clamp-2 text-clever-black/55 text-sm">{item.note}</p>
@@ -101,4 +119,110 @@ export default async function FeedbackPage() {
       </section>
     </main>
   );
+}
+
+function AnalyticsDashboard({ stats }: { readonly stats: FeedbackAnalytics }) {
+  const maxReason = Math.max(1, ...stats.byReason.map((r) => r.count));
+  return (
+    <div className="space-y-4 rounded-xl border border-clever-light-blue bg-clever-light-blue/15 p-4">
+      {/* Headline metrics */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Total flags" value={String(stats.total)} />
+        <Stat label="Last 7 days" value={String(stats.last7Days)} />
+        <Stat
+          accent={stats.lowConfidenceCount > 0}
+          label="Low-confidence"
+          value={String(stats.lowConfidenceCount)}
+        />
+        <Stat
+          icon={<CoinsIcon className="size-3 text-clever-blue/60" />}
+          label="Avg thread cost"
+          value={formatUsd(stats.avgCost)}
+        />
+      </div>
+
+      {/* Reason breakdown */}
+      {stats.byReason.length > 0 ? (
+        <div className="space-y-1.5">
+          <p className="font-medium text-clever-black/40 text-xs uppercase tracking-wide">
+            By reason
+          </p>
+          <div className="space-y-1.5">
+            {stats.byReason.map((r) => (
+              <div className="flex items-center gap-2" key={r.reason}>
+                <span className="w-32 shrink-0 truncate text-clever-navy/70 text-xs">
+                  {reasonLabel(r.reason)}
+                </span>
+                <span className="h-2 flex-1 overflow-hidden rounded-full bg-clever-light-blue/60">
+                  <span
+                    className={cn("block h-full rounded-full", barColor(r.reason))}
+                    style={{ width: `${Math.max(4, Math.round((r.count / maxReason) * 100))}%` }}
+                  />
+                </span>
+                <span className="w-6 text-right text-clever-black/50 text-xs tabular-nums">
+                  {r.count}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Top reporters */}
+      {stats.topReporters.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-clever-black/40">Top reporters:</span>
+          {stats.topReporters.map((r) => (
+            <span
+              className="rounded-full bg-white px-2 py-0.5 text-clever-navy/70"
+              key={r.reporter}
+            >
+              {r.reporter} · {r.count}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  icon,
+  accent,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly icon?: React.ReactNode;
+  readonly accent?: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-clever-light-blue/70 bg-white px-3 py-2.5">
+      <p className="text-clever-black/40 text-[11px] uppercase tracking-wide">{label}</p>
+      <p
+        className={cn(
+          "mt-0.5 flex items-center gap-1 font-medium text-lg tabular-nums",
+          accent ? "text-clever-orange" : "text-clever-navy",
+        )}
+      >
+        {icon}
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function barColor(reason: string): string {
+  switch (reason) {
+    case "hallucination":
+    case "wrong":
+      return "bg-clever-orange";
+    case "incomplete":
+      return "bg-clever-yellow";
+    case "bad-source":
+      return "bg-clever-blue";
+    default:
+      return "bg-clever-navy/40";
+  }
 }
