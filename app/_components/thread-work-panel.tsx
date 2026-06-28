@@ -5,31 +5,52 @@ import { CheckIcon, ChevronDownIcon, CopyIcon, SearchCheckIcon } from "lucide-re
 import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import {
+  AnswerOnlyPanel,
   formatRetrievalUsd,
   isSupportSearchOutput,
   type SearchOutput,
   SupportSearchPanel,
 } from "./support-search-panel";
 
-// A single "Show your work" pinned at the bottom of the thread. It records every
-// retrieval (query, sources, scores, confidence, per-call cost) and the answer
-// (inference) cost, accumulating as the thread grows — so for testing you can
-// see and export the complete picture rather than per-message fragments.
+// A single "Show your work" pinned at the bottom of the thread. It itemizes the
+// whole thread by TURN — every turn that cost money gets its own row, whether it
+// ran a help-center search or only inference (a clarifying question / HITL input
+// request, or a direct answer). Because the headline total and the rows are both
+// summed over the same turns, the rows always reconcile with the total — no step
+// is folded into the total but hidden from the breakdown.
 
-type Retrieval = {
+type TurnSearch = {
   readonly key: string;
   readonly output: SearchOutput;
-  readonly inferenceCost?: number;
+};
+
+type TurnEntry = {
+  readonly key: string;
+  // "search": ran ≥1 help-center search. "clarify": asked a HITL input request.
+  // "answer": answered with no retrieval.
+  readonly kind: "search" | "clarify" | "answer";
+  readonly inferenceCost: number;
+  readonly retrievalCost: number;
+  readonly searches: readonly TurnSearch[];
+  readonly clarifyPrompt?: string;
+  readonly clarifyResponse?: string;
 };
 
 type ThreadRecord = {
-  readonly retrievals: ReadonlyArray<{
-    readonly query?: string;
-    readonly method?: string;
-    readonly confidence?: SearchOutput["confidence"];
-    readonly cost?: SearchOutput["cost"];
-    readonly answerCost?: number;
-    readonly results?: SearchOutput["results"];
+  readonly turns: ReadonlyArray<{
+    readonly kind: TurnEntry["kind"];
+    readonly answerCost: number;
+    readonly retrievalCost: number;
+    readonly totalCost: number;
+    readonly prompt?: string;
+    readonly response?: string;
+    readonly searches: ReadonlyArray<{
+      readonly query?: string;
+      readonly method?: string;
+      readonly confidence?: SearchOutput["confidence"];
+      readonly cost?: SearchOutput["cost"];
+      readonly results?: SearchOutput["results"];
+    }>;
   }>;
   readonly costs: { readonly retrieval: number; readonly answer: number; readonly total: number };
 };
@@ -50,59 +71,123 @@ export function ThreadWorkPanel({
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  const { retrievals, retrievalCost, inferenceCost, totalCost, record } = useMemo(() => {
-    const found: Retrieval[] = [];
-    let retrieval = 0;
-    let inference = 0;
-    // Inference is billed per TURN, but one turn can span multiple messages — a
-    // tool/search message plus a follow-up, or a human-in-the-loop input request
-    // ("which setup are you looking for?"). inferenceByMessageId stamps the turn's
-    // full cost on EACH of those messages, so we must add it once per turnId;
-    // summing per message double-counts the answer cost.
+  const { turns, retrievalCost, inferenceCost, totalCost, searchCount, record } = useMemo(() => {
+    // Group every message into its turn. Inference is billed per TURN, but one
+    // turn can span multiple messages (a tool/search message plus the answer, or
+    // an input-request message). inferenceByMessageId stamps the turn's full cost
+    // on EACH message, so we add it once per turnId; messages without a turnId
+    // (rare) each count on their own.
+    const order: string[] = [];
+    const map = new Map<
+      string,
+      {
+        inference: number;
+        searches: TurnSearch[];
+        hasInputRequest: boolean;
+        clarifyPrompt?: string;
+        clarifyResponse?: string;
+      }
+    >();
+    const ensure = (key: string) => {
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { inference: 0, searches: [], hasInputRequest: false };
+        map.set(key, entry);
+        order.push(key);
+      }
+      return entry;
+    };
+
     const countedTurns = new Set<string>();
     for (const message of messages) {
       const turnId = message.metadata?.turnId;
+      const key = turnId ?? `msg:${message.id}`;
+      const entry = ensure(key);
       const messageInference = inferenceByMessageId?.[message.id] ?? 0;
       if (turnId) {
         if (!countedTurns.has(turnId)) {
-          inference += messageInference;
+          entry.inference += messageInference;
           countedTurns.add(turnId);
         }
       } else {
-        inference += messageInference;
+        entry.inference += messageInference;
       }
       for (const part of message.parts) {
-        if (
-          part.type === "dynamic-tool" &&
-          part.toolName === "search_support" &&
-          isSupportSearchOutput(part.output)
-        ) {
-          found.push({
-            key: part.toolCallId,
-            output: part.output,
-            inferenceCost: inferenceByMessageId?.[message.id],
-          });
-          retrieval += part.output.cost?.total ?? 0;
+        if (part.type !== "dynamic-tool") continue;
+        if (part.toolName === "search_support" && isSupportSearchOutput(part.output)) {
+          entry.searches.push({ key: part.toolCallId, output: part.output });
+        }
+        // A clarifying question (human-in-the-loop input request) — label the turn
+        // and capture the prompt + the user's choice for the record.
+        const inputRequest = part.toolMetadata?.eve?.inputRequest;
+        if (inputRequest) {
+          entry.hasInputRequest = true;
+          entry.clarifyPrompt = inputRequest.prompt ?? entry.clarifyPrompt;
+          const response = part.toolMetadata?.eve?.inputResponse;
+          if (response) {
+            const option = inputRequest.options?.find((o) => o.id === response.optionId);
+            entry.clarifyResponse =
+              option?.label ?? response.text ?? response.optionId ?? entry.clarifyResponse;
+          }
         }
       }
     }
+
+    const built: TurnEntry[] = [];
+    let retrieval = 0;
+    let inference = 0;
+    let searches = 0;
+    for (const key of order) {
+      const entry = map.get(key);
+      if (!entry) continue;
+      const turnRetrieval = entry.searches.reduce((sum, s) => sum + (s.output.cost?.total ?? 0), 0);
+      retrieval += turnRetrieval;
+      inference += entry.inference;
+      searches += entry.searches.length;
+      // Drop turns with nothing to show (e.g. a bare user message: no search, no
+      // inference, no input request) so the breakdown stays honest and uncluttered.
+      if (entry.searches.length === 0 && entry.inference === 0 && !entry.hasInputRequest) {
+        continue;
+      }
+      const kind: TurnEntry["kind"] =
+        entry.searches.length > 0 ? "search" : entry.hasInputRequest ? "clarify" : "answer";
+      built.push({
+        key,
+        kind,
+        inferenceCost: entry.inference,
+        retrievalCost: turnRetrieval,
+        searches: entry.searches,
+        clarifyPrompt: entry.clarifyPrompt,
+        clarifyResponse: entry.clarifyResponse,
+      });
+    }
     const total = retrieval + inference;
+
     const rec: ThreadRecord = {
-      retrievals: found.map((r) => ({
-        query: r.output.query,
-        method: r.output.method,
-        confidence: r.output.confidence,
-        cost: r.output.cost,
-        answerCost: r.inferenceCost,
-        results: r.output.results,
+      turns: built.map((t) => ({
+        kind: t.kind,
+        answerCost: t.inferenceCost,
+        retrievalCost: t.retrievalCost,
+        totalCost: t.inferenceCost + t.retrievalCost,
+        prompt: t.clarifyPrompt,
+        response: t.clarifyResponse,
+        searches: t.searches.map((s) => ({
+          query: s.output.query,
+          method: s.output.method,
+          confidence: s.output.confidence,
+          cost: s.output.cost,
+          results: s.output.results,
+        })),
       })),
       costs: { retrieval, answer: inference, total },
     };
+
     return {
-      retrievals: found,
+      turns: built,
       retrievalCost: retrieval,
       inferenceCost: inference,
       totalCost: total,
+      searchCount: searches,
       record: rec,
     };
   }, [messages, inferenceByMessageId]);
@@ -112,7 +197,7 @@ export function ThreadWorkPanel({
     window.__cleverThreadRecord = record;
   }, [record]);
 
-  if (retrievals.length === 0) return null;
+  if (turns.length === 0) return null;
 
   const copyRecord = () => {
     void navigator.clipboard
@@ -124,6 +209,13 @@ export function ThreadWorkPanel({
       .catch(() => undefined);
   };
 
+  // Headline subtitle: "N steps" — and when every step ran a search, the friendlier
+  // "N searches". The two only diverge when a turn answered without searching.
+  const allSearches = searchCount === turns.length;
+  const countLabel = allSearches
+    ? `${searchCount} search${searchCount === 1 ? "" : "es"}`
+    : `${turns.length} step${turns.length === 1 ? "" : "s"}`;
+
   return (
     <div className="not-prose w-full overflow-hidden rounded-lg border border-clever-light-blue/60 bg-white">
       <button
@@ -134,9 +226,7 @@ export function ThreadWorkPanel({
       >
         <SearchCheckIcon className="size-3.5 shrink-0 text-clever-blue/60" />
         <span className="font-medium text-clever-navy/70 text-xs">Show your work</span>
-        <span className="text-[11px] text-clever-black/35">
-          · {retrievals.length} search{retrievals.length === 1 ? "" : "es"}
-        </span>
+        <span className="text-[11px] text-clever-black/35">· {countLabel}</span>
         <span className="ml-auto flex items-center gap-2">
           <span className="rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">
             {formatRetrievalUsd(totalCost)}
@@ -175,16 +265,44 @@ export function ThreadWorkPanel({
             </button>
           </div>
 
-          {/* Every retrieval in the thread, newest at the bottom (thread order) */}
+          {/* Every billed turn in the thread, in thread order (newest at the bottom).
+              Search turns render the trust panel; no-search turns (clarifying
+              questions / direct answers) render their answer-only cost so the rows
+              sum to the headline total. */}
           <div className="space-y-2">
-            {retrievals.map((r) => (
-              <SupportSearchPanel
-                inferenceCost={r.inferenceCost}
-                key={r.key}
-                label={r.output.query || "Retrieval"}
-                output={r.output}
-              />
-            ))}
+            {turns.map((turn) => {
+              if (turn.kind === "search") {
+                return turn.searches.map((s, i) => (
+                  <SupportSearchPanel
+                    // The answer cost is a whole-turn cost — attribute it once (to
+                    // the turn's first search) so a multi-search turn can't
+                    // double-count it across panels.
+                    inferenceCost={i === 0 ? turn.inferenceCost : undefined}
+                    key={s.key}
+                    label={s.output.query || "Retrieval"}
+                    output={s.output}
+                  />
+                ));
+              }
+              const subtitle =
+                turn.kind === "clarify"
+                  ? [
+                      turn.clarifyPrompt,
+                      turn.clarifyResponse ? `you chose "${turn.clarifyResponse}"` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" — ") || undefined
+                  : undefined;
+              return (
+                <AnswerOnlyPanel
+                  inferenceCost={turn.inferenceCost}
+                  key={turn.key}
+                  kind={turn.kind === "clarify" ? "clarify" : "answer"}
+                  label={turn.kind === "clarify" ? "Clarifying question" : "Answer (no retrieval)"}
+                  subtitle={subtitle}
+                />
+              );
+            })}
           </div>
         </div>
       ) : null}

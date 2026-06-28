@@ -4,8 +4,10 @@ import {
   ChevronDownIcon,
   CoinsIcon,
   ExternalLinkIcon,
+  MessageCircleQuestionIcon,
   SearchCheckIcon,
   ShieldCheckIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { useState } from "react";
 import { ANSWER_MODEL } from "@/lib/inference-cost";
@@ -241,6 +243,64 @@ export function SupportSearchPanel({
           {cost || inferenceCost != null ? (
             <CostBreakdown cost={cost} inferenceCost={inferenceCost} />
           ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// A turn that incurred answer (LLM) cost but ran NO help-center search — e.g. the
+// agent asking a clarifying question (HITL input request) or answering directly
+// from prior context. Surfaced in "Show your work" so the itemized turns reconcile
+// with the thread total instead of silently dropping these (real, billed) steps.
+export function AnswerOnlyPanel({
+  label,
+  subtitle,
+  inferenceCost,
+  kind = "answer",
+}: {
+  readonly label: string;
+  readonly subtitle?: string;
+  readonly inferenceCost?: number;
+  readonly kind?: "clarify" | "answer";
+}) {
+  const [open, setOpen] = useState(false);
+  const turnTotal = inferenceCost ?? 0;
+  const Icon = kind === "clarify" ? MessageCircleQuestionIcon : SparklesIcon;
+
+  return (
+    <div className="not-prose w-full overflow-hidden rounded-lg border border-clever-light-blue/60 bg-white">
+      <button
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-clever-light-blue/20"
+        onClick={() => setOpen((v) => !v)}
+        type="button"
+      >
+        <Icon className="size-3.5 shrink-0 text-clever-blue/60" />
+        <span className="min-w-0 truncate font-medium text-clever-navy/70 text-xs">{label}</span>
+        <span className="ml-auto flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">
+            <CoinsIcon className="size-3 text-clever-blue/60" />
+            {formatRetrievalUsd(turnTotal)}
+          </span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 shrink-0 text-clever-black/35 transition-transform",
+              open && "rotate-180",
+            )}
+          />
+        </span>
+      </button>
+
+      {open ? (
+        <div className="space-y-3 border-clever-light-blue/60 border-t px-4 py-3.5">
+          {subtitle ? (
+            <p className="text-clever-black/55 text-xs leading-relaxed">{subtitle}</p>
+          ) : null}
+          <span className="inline-flex items-center rounded-full border border-clever-light-blue bg-white px-2.5 py-0.5 font-medium text-[11px] text-clever-black/45">
+            no retrieval · answer only
+          </span>
+          <CostBreakdown inferenceCost={inferenceCost} />
         </div>
       ) : null}
     </div>
