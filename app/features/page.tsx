@@ -34,6 +34,7 @@ const PRIMITIVES = [
   "Multi-channel",
   "Agent Runs",
   "MCP",
+  "Schedules",
   "Skills",
   "Subagents",
 ];
@@ -103,6 +104,13 @@ const LIVE: Feature[] = [
       "The same retrieval pipeline is exposed as a remote MCP server, so colleagues can query Clever's KB from inside Claude, VS Code, or Cursor — one brain, many front doors.",
     tags: ["MCP", "AI Gateway"],
   },
+  {
+    icon: RefreshCwIcon,
+    title: "Self-refreshing knowledge base",
+    blurb:
+      "A daily eve Schedule re-crawls and re-embeds Clever's help center and hot-swaps it into live search through Vercel Blob — so new and updated articles show up with no rebuild and no redeploy.",
+    tags: ["Schedules", "Knowledge base"],
+  },
 ];
 
 // On the roadmap — from the feature backlog, sized for what's next.
@@ -136,11 +144,11 @@ const NEXT: Feature[] = [
     tags: ["Subagents", "Evals"],
   },
   {
-    icon: RefreshCwIcon,
+    icon: ScanSearchIcon,
     title: "KB freshness audit",
     blurb:
-      "A scheduled job re-crawls the live help center, diffs content hashes, and flags answers built on articles that changed since indexing — verify on the live page.",
-    tags: ["Schedules", "Sandbox"],
+      "Building on the daily refresh: diff content hashes between runs and flag past answers built on articles that have since changed, so stale guidance gets caught — verify on the live page.",
+    tags: ["Schedules", "Evals"],
   },
   {
     icon: BotIcon,
