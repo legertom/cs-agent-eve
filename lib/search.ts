@@ -1,6 +1,16 @@
 import { gateway } from "@ai-sdk/gateway";
 import { embed, rerank } from "ai";
+import { head } from "@vercel/blob";
 import { audienceLabel, audienceOf } from "./audience";
+import {
+  EMBED_DIMS,
+  EMBED_MODEL,
+  KB_BLOB_PATH,
+  KB_VECTORS_BLOB_PATH,
+} from "./kb-config.mjs";
+// Bundled snapshot — the fallback used when the Blob KB is absent (first deploy,
+// before the refresh schedule has ever run) or temporarily unreadable, so search
+// never serves an empty KB.
 import kbData from "#data/kb.json" with { type: "json" };
 import vectorData from "#data/kb-vectors.json" with { type: "json" };
 
@@ -8,11 +18,12 @@ import vectorData from "#data/kb-vectors.json" with { type: "json" };
 //
 // This is the framework-agnostic core: no eve imports, so it is shared by both
 // the eve tool (agent/tools/search_support.ts) and the MCP server route
-// (app/api/[transport]/route.ts) without dragging the agent runtime into the
-// Next.js bundle.
+// (app/api/mcp/route.ts) without dragging the agent runtime into the Next.js
+// bundle. The KB itself is loaded lazily from Vercel Blob (see ensureIndex),
+// with the bundled #data snapshot as a fallback.
 //
 // 1. Two base retrievers, fused with Reciprocal Rank Fusion (RRF):
-//      • semantic — query embedding vs bundled article embeddings (meaning)
+//      • semantic — query embedding vs article embeddings (meaning)
 //      • lexical (BM25) — keyword/term overlap (exact field names like
 //        "home_language", which embeddings underweight)
 // 2. A cross-encoder reranker (Cohere via AI Gateway) re-scores the top
@@ -23,11 +34,10 @@ import vectorData from "#data/kb-vectors.json" with { type: "json" };
 // retrievers see clean tokens.
 type Article = { id: string; url: string; title?: string; text: string };
 
-const KB = kbData as Article[];
-const VECTORS = vectorData as number[][];
-
-const EMBED_MODEL = "openai/text-embedding-3-small";
-const EMBED_DIMS = 512; // must match scripts/embed.mjs
+// EMBED_MODEL / EMBED_DIMS are imported from kb-config.mjs — the single source
+// shared with the embed step, so the query embedding can never drift from the
+// document embeddings (a dims mismatch silently corrupts cosine similarity).
+// EMBED_DIMS stays 512.
 const RERANK_MODEL = "cohere/rerank-v4-fast";
 const RERANK_CANDIDATES = 20; // how many hybrid hits to rerank
 const RERANK_DOC_CHARS = 4000; // context per doc given to the reranker
@@ -61,38 +71,63 @@ function tokenize(s: string): string[] {
   );
 }
 
-// --- BM25 index (built once at module load) ---
-const DOCS = KB.map((a) => {
-  const tf = new Map<string, number>();
-  for (const t of tokenize(a.text)) tf.set(t, (tf.get(t) ?? 0) + 1);
-  for (const t of tokenize(a.title ?? "")) tf.set(t, (tf.get(t) ?? 0) + 3); // title boost
-  let len = 0;
-  for (const c of tf.values()) len += c;
-  return { tf, len: len + 1 };
-});
+// --- KB index: a single immutable snapshot, swapped atomically by the loader ---
+// The whole index (KB + vectors + the derived BM25/semantic structures) lives in
+// ONE object behind `currentIndex`. The lazy loader replaces it with a NEW object
+// in a single assignment — it never mutates fields in place. searchSupport
+// snapshots `currentIndex` into a local once and threads it through every ranking
+// step, so a daily Blob refresh that swaps the object mid-request can never mix a
+// new KB with indices computed against the old one (which would misalign results
+// or read out of bounds across an await).
+type Doc = { tf: Map<string, number>; len: number };
+type KbIndex = {
+  KB: Article[];
+  VECTORS: number[][];
+  DOCS: Doc[];
+  IDF: Map<string, number>;
+  AVG_LEN: number;
+  NORMS: number[];
+};
 
-const IDF = (() => {
+let currentIndex: KbIndex | null = null;
+
+// Build a fresh, self-consistent index from a KB + its vectors. Same math as the
+// old module-load build (BM25 tf/IDF/AVG_LEN + semantic NORMS); the only change
+// is it RETURNS a new object instead of mutating module state, so the loader's
+// swap is atomic.
+function makeIndex(kb: Article[], vectors: number[][]): KbIndex {
+  const DOCS: Doc[] = kb.map((a) => {
+    const tf = new Map<string, number>();
+    for (const t of tokenize(a.text)) tf.set(t, (tf.get(t) ?? 0) + 1);
+    for (const t of tokenize(a.title ?? "")) tf.set(t, (tf.get(t) ?? 0) + 3); // title boost
+    let len = 0;
+    for (const c of tf.values()) len += c;
+    return { tf, len: len + 1 };
+  });
+
   const df = new Map<string, number>();
   for (const d of DOCS) for (const t of d.tf.keys()) df.set(t, (df.get(t) ?? 0) + 1);
   const n = DOCS.length || 1;
-  const idf = new Map<string, number>();
-  for (const [t, c] of df) idf.set(t, Math.log(1 + n / (1 + c)));
-  return idf;
-})();
+  const IDF = new Map<string, number>();
+  for (const [t, c] of df) IDF.set(t, Math.log(1 + n / (1 + c)));
 
-const AVG_LEN = DOCS.reduce((s, d) => s + d.len, 0) / (DOCS.length || 1);
+  const AVG_LEN = DOCS.reduce((s, d) => s + d.len, 0) / (DOCS.length || 1);
+  const NORMS = vectors.map((v) => Math.hypot(...v) || 1);
 
-function bm25Ranking(query: string): number[] {
+  return { KB: kb, VECTORS: vectors, DOCS, IDF, AVG_LEN, NORMS };
+}
+
+function bm25Ranking(idx: KbIndex, query: string): number[] {
   const terms = tokenize(query);
   const k1 = 1.5;
   const b = 0.75;
-  return DOCS.map((d, i) => {
+  return idx.DOCS.map((d, i) => {
     let score = 0;
     for (const t of terms) {
       const f = d.tf.get(t);
       if (!f) continue;
-      const idf = IDF.get(t) ?? 0;
-      score += (idf * (f * (k1 + 1))) / (f + k1 * (1 - b + b * (d.len / AVG_LEN)));
+      const idf = idx.IDF.get(t) ?? 0;
+      score += (idf * (f * (k1 + 1))) / (f + k1 * (1 - b + b * (d.len / idx.AVG_LEN)));
     }
     return { i, score };
   })
@@ -101,15 +136,13 @@ function bm25Ranking(query: string): number[] {
     .map((x) => x.i);
 }
 
-// --- Semantic ---
-const NORMS = VECTORS.map((v) => Math.hypot(...v) || 1);
-
-function semanticRanking(qvec: number[]): number[] {
+// --- Semantic --- (NORMS lives in the same index object as the BM25 structures)
+function semanticRanking(idx: KbIndex, qvec: number[]): number[] {
   const qn = Math.hypot(...qvec) || 1;
-  return VECTORS.map((v, i) => {
+  return idx.VECTORS.map((v, i) => {
     let dot = 0;
     for (let k = 0; k < v.length; k++) dot += qvec[k] * v[k];
-    return { i, score: dot / (qn * NORMS[i]) };
+    return { i, score: dot / (qn * idx.NORMS[i]) };
   })
     .sort((a, b) => b.score - a.score)
     .map((x) => x.i);
@@ -132,11 +165,15 @@ function rrf(...lists: number[][]): number[] {
 //  • ok     — whether the reranker actually ran (false → lexical/hybrid only)
 type RerankResult = { order: number[]; scores: Map<number, number>; ok: boolean };
 
-async function rerankCandidates(query: string, candidates: number[]): Promise<RerankResult> {
+async function rerankCandidates(
+  idx: KbIndex,
+  query: string,
+  candidates: number[],
+): Promise<RerankResult> {
   if (candidates.length <= 1) return { order: candidates, scores: new Map(), ok: false };
   try {
     const documents = candidates.map(
-      (i) => `${KB[i].title ?? ""}\n\n${KB[i].text.slice(0, RERANK_DOC_CHARS)}`,
+      (i) => `${idx.KB[i].title ?? ""}\n\n${idx.KB[i].text.slice(0, RERANK_DOC_CHARS)}`,
     );
     const { ranking } = await rerank({
       model: gateway.rerankingModel(RERANK_MODEL),
@@ -218,14 +255,110 @@ export type SearchResponse =
     }
   | { error: string };
 
+// --- Lazy, TTL-cached KB loader (Blob → bundled fallback) -------------------
+// The KB is written daily to Vercel Blob by the refresh schedule
+// (agent/schedules/refresh-kb.ts). We load it on the first search and cache the
+// built index on the warm instance for INDEX_TTL_MS, then re-read — so a daily
+// Blob overwrite reaches live search with no rebuild and no redeploy, while warm
+// requests don't re-fetch on every call. Memoize-forever would silently recreate
+// the original staleness bug, so the TTL is load-bearing. Blob loading uses only
+// @vercel/blob, keeping this module eve-free.
+const INDEX_TTL_MS = Number(process.env.KB_INDEX_TTL_MS ?? 10 * 60 * 1000);
+let indexSource: "blob" | "fallback" | "none" = "none";
+let indexLoadedAt = 0;
+let loadInFlight: Promise<void> | null = null;
+
+async function fetchBlobJson<T>(pathname: string): Promise<T | null> {
+  try {
+    // head() resolves the blob's public URL by pathname; we then fetch the body.
+    // (Mirrors lib/blob-shares.ts — get({access:"public"}) 403s this store.)
+    const meta = await head(pathname);
+    const res = await fetch(meta.url, { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    // Object absent (BlobNotFoundError) or a transient read error → null.
+    return null;
+  }
+}
+
+function installFallback(): void {
+  currentIndex = makeIndex(kbData as Article[], vectorData as number[][]);
+  indexSource = "fallback";
+  indexLoadedAt = Date.now();
+}
+
+async function loadIndex(): Promise<void> {
+  const [kb, vectors] = await Promise.all([
+    fetchBlobJson<Article[]>(KB_BLOB_PATH),
+    fetchBlobJson<number[][]>(KB_VECTORS_BLOB_PATH),
+  ]);
+
+  if (kb && vectors && kb.length > 0 && vectors.length === kb.length) {
+    // Atomic swap: build the whole new index, then assign in one statement so an
+    // in-flight request that snapshotted the old index keeps a consistent view.
+    currentIndex = makeIndex(kb, vectors);
+    indexSource = "blob";
+    indexLoadedAt = Date.now();
+    return;
+  }
+
+  // Blob unavailable or degenerate. If we already hold a good Blob-backed index,
+  // keep serving it rather than downgrading to the bundle on a transient miss;
+  // just reset the timer so we retry on the next TTL window.
+  if (indexSource === "blob" && currentIndex) {
+    indexLoadedAt = Date.now();
+    return;
+  }
+
+  // First load (or still on the bundled fallback) and Blob isn't usable yet →
+  // (re)build from the bundled #data snapshot so we never serve an empty KB.
+  installFallback();
+}
+
+async function ensureIndex(): Promise<void> {
+  const fresh = currentIndex !== null && Date.now() - indexLoadedAt < INDEX_TTL_MS;
+  if (fresh) return;
+  // Coalesce concurrent (re)loads so a warm instance issues one Blob read, not N.
+  if (!loadInFlight) {
+    loadInFlight = loadIndex().finally(() => {
+      loadInFlight = null;
+    });
+  }
+  try {
+    await loadInFlight;
+  } catch (err) {
+    // loadIndex is written not to throw, but be defensive — a load error must
+    // never propagate out of searchSupport.
+    console.error("[search] KB index load failed:", err);
+  }
+  // Last resort: never leave searchSupport without an index. Guarded so the
+  // recovery itself can never throw out of searchSupport (if even the bundled
+  // build fails, currentIndex stays null and the guard returns an error response).
+  if (currentIndex === null) {
+    try {
+      installFallback();
+    } catch (err) {
+      console.error("[search] bundled fallback build failed:", err);
+    }
+  }
+}
+
 // Run the full hybrid + reranked search and return ranked, cited results with a
 // calibrated confidence signal. Shared by the eve tool and the MCP server.
 export async function searchSupport(query: string, limit?: number): Promise<SearchResponse> {
-  if (KB.length === 0 || VECTORS.length !== KB.length) {
+  // Load the KB index (Blob, or bundled fallback) and refresh it per the TTL.
+  await ensureIndex();
+
+  // Snapshot the index ONCE. Every ranking step below reads from `idx`, never the
+  // module-level `currentIndex`, so a concurrent Blob refresh that swaps the index
+  // across one of our awaits can't misalign results or read out of bounds.
+  const idx = currentIndex;
+  if (!idx || idx.KB.length === 0 || idx.VECTORS.length !== idx.KB.length) {
     return { error: "Knowledge base not built. Run scripts/ingest.mjs + scripts/embed.mjs." };
   }
 
-  const lexical = bm25Ranking(query);
+  const lexical = bm25Ranking(idx, query);
 
   let semantic: number[] = [];
   let embeddingTokens = 0;
@@ -236,7 +369,7 @@ export async function searchSupport(query: string, limit?: number): Promise<Sear
       providerOptions: { openai: { dimensions: EMBED_DIMS } },
     });
     embeddingTokens = usage.tokens;
-    semantic = semanticRanking(embedding);
+    semantic = semanticRanking(idx, embedding);
   } catch {
     // If embeddings are unavailable, fall back to lexical only.
     semantic = [];
@@ -248,18 +381,18 @@ export async function searchSupport(query: string, limit?: number): Promise<Sear
   // Rerank the top hybrid candidates, then BLEND rerank order with hybrid
   // order so the reranker sharpens precision without overriding a strong base.
   const candidates = hybrid.slice(0, RERANK_CANDIDATES);
-  const { order: reranked, scores, ok: didRerank } = await rerankCandidates(query, candidates);
+  const { order: reranked, scores, ok: didRerank } = await rerankCandidates(idx, query, candidates);
   const blended = didRerank ? rrf(candidates, reranked) : hybrid;
   const final = blended.slice(0, limit ?? 5);
 
   const results: SearchResultItem[] = final.map((i, rank) => ({
     rank: rank + 1,
-    title: KB[i].title,
-    url: KB[i].url,
-    excerpt: excerpt(KB[i].text, query),
+    title: idx.KB[i].title,
+    url: idx.KB[i].url,
+    excerpt: excerpt(idx.KB[i].text, query),
     // Reranker relevance for this article (0–1), or null when unscored.
     score: scores.has(i) ? round3(scores.get(i) as number) : null,
-    audience: audienceLabel(audienceOf(KB[i].title)),
+    audience: audienceLabel(audienceOf(idx.KB[i].title)),
   }));
 
   // Confidence signal from scores the pipeline already computes:
