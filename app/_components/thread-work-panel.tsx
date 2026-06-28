@@ -64,11 +64,15 @@ declare global {
 export function ThreadWorkPanel({
   messages,
   inferenceByMessageId,
+  defaultOpen = false,
 }: {
   readonly messages: readonly EveMessage[];
   readonly inferenceByMessageId?: Readonly<Record<string, number>>;
+  // Start expanded — the flagged-thread investigation view wants the full trail
+  // visible without a click. The live chat leaves it collapsed (optional proof).
+  readonly defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [copied, setCopied] = useState(false);
 
   const { turns, retrievalCost, inferenceCost, totalCost, searchCount, record } = useMemo(() => {

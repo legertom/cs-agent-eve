@@ -11,19 +11,27 @@ import {
 import { cn } from "@/lib/utils";
 import type { AgentInputResponse } from "./agent-message";
 import { AgentMessage } from "./agent-message";
-import {
-  formatRetrievalUsd,
-  isSupportSearchOutput,
-  SupportSearchPanel,
-} from "./support-search-panel";
+import { formatRetrievalUsd, isSupportSearchOutput } from "./support-search-panel";
+import { ThreadWorkPanel } from "./thread-work-panel";
 
 // Read-only investigation view for one flagged thread. Shows the reporter's note,
 // the full transcript, and — crucially for "why did it make that up?" — every
-// retrieval's trust panel (confidence band + ranked sources + reranker scores).
+// step's trust panel (confidence band + ranked sources + reranker scores), plus
+// any no-search steps (clarifying questions), itemized by turn so the per-step
+// costs reconcile with the thread total above.
 const NOOP = (_responses: readonly AgentInputResponse[]) => {};
 
 export function FeedbackDetail({ payload }: { readonly payload: FeedbackPayload }) {
-  const retrievals = payload.retrievals.filter((r) => isSupportSearchOutput(r.output));
+  // Did the thread ever run a help-center search? A flag with no search is the
+  // classic "answered without grounding" case worth calling out for triage.
+  const hadSearch = payload.messages.some((message) =>
+    message.parts.some(
+      (part) =>
+        part.type === "dynamic-tool" &&
+        part.toolName === "search_support" &&
+        isSupportSearchOutput(part.output),
+    ),
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white">
@@ -99,29 +107,25 @@ export function FeedbackDetail({ payload }: { readonly payload: FeedbackPayload 
             ))}
           </div>
 
-          {/* The retrieval trail — what the answer was actually based on */}
-          {retrievals.length > 0 ? (
-            <div className="space-y-2">
-              <p className="font-medium text-clever-black/40 text-xs uppercase tracking-wide">
-                What it retrieved ({retrievals.length})
-              </p>
-              {retrievals.map((r, i) =>
-                isSupportSearchOutput(r.output) ? (
-                  <SupportSearchPanel
-                    inferenceCost={r.inferenceCost}
-                    key={`${r.output.query ?? "retrieval"}-${i}`}
-                    label={r.output.query || "Retrieval"}
-                    output={r.output}
-                  />
-                ) : null,
-              )}
-            </div>
-          ) : (
-            <p className="text-clever-black/40 text-sm">
-              No searches were recorded for this thread — the answer may not have
-              been grounded in a retrieval at all.
+          {/* The work trail — every step the thread took (searches with their
+              confidence + sources, plus clarifying questions), itemized by turn so
+              the per-step costs reconcile with the thread total above. */}
+          <div className="space-y-2">
+            <p className="font-medium text-clever-black/40 text-xs uppercase tracking-wide">
+              What it did
             </p>
-          )}
+            <ThreadWorkPanel
+              defaultOpen
+              inferenceByMessageId={payload.inferenceByMessageId}
+              messages={payload.messages}
+            />
+            {!hadSearch ? (
+              <p className="text-clever-black/40 text-sm">
+                No help-center search ran in this thread — the answer may not have
+                been grounded in a retrieval at all.
+              </p>
+            ) : null}
+          </div>
 
           <div className="flex items-center justify-between pt-2">
             <Link
