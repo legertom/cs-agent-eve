@@ -50,14 +50,34 @@ function onTurn(turnId: string, mutate: (acc: TurnAccumulator) => TurnAccumulato
   turnLog.update((acc) => mutate(acc.turnId === turnId ? acc : emptyTurn(turnId)));
 }
 
+// A user message is usually a plain string, but a turn that resumes from a
+// clarifying-question reply can arrive as structured UserContent (an array of
+// parts). Extract text from both so the reply is retained for analysis instead
+// of being dropped (which left those turns logged with an empty question).
+function userText(message: unknown): string {
+  if (typeof message === "string") return message.trim();
+  if (Array.isArray(message)) {
+    return message
+      .map((part) =>
+        part && typeof part === "object" && (part as { type?: unknown }).type === "text"
+          ? String((part as { text?: unknown }).text ?? "")
+          : "",
+      )
+      .join(" ")
+      .trim();
+  }
+  return "";
+}
+
 export default defineHook({
   events: {
-    // The user's question (also the input-response text on a resumed turn).
+    // The user's question — including the reply text on a resumed turn, whether
+    // it arrives as a plain string or as structured UserContent (see userText).
     "message.received"(event) {
       try {
-        const { turnId, message } = event.data;
-        if (typeof message !== "string") return;
-        onTurn(turnId, (acc) => ({ ...acc, question: message }));
+        const text = userText(event.data.message);
+        if (!text) return;
+        onTurn(event.data.turnId, (acc) => ({ ...acc, question: text }));
       } catch {
         // never throw from a hook
       }

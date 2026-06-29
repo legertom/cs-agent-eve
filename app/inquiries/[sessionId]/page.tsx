@@ -13,6 +13,7 @@ import {
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { MessageResponse } from "@/components/ai-elements/message";
 import { formatFeedbackDate, formatUsd, reasonBadgeClass, reasonLabel } from "@/lib/feedback";
 import {
   type InquiryTurnSearch,
@@ -120,23 +121,34 @@ function TurnCard({ turn, index }: { readonly turn: SessionInquiryTurn; readonly
       </div>
 
       <div className="space-y-4 px-4 py-4">
-        <div>
-          <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
-            Asked
+        {turn.question ? (
+          <div>
+            <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
+              Asked
+            </p>
+            <p className="font-medium text-clever-navy">{turn.question}</p>
+          </div>
+        ) : index > 1 ? (
+          <p className="text-clever-black/45 text-sm italic">
+            ↳ Reply to the clarifying question above
           </p>
-          <p className="font-medium text-clever-navy">
-            {turn.question || "(no question captured)"}
-          </p>
-        </div>
+        ) : (
+          <div>
+            <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
+              Asked
+            </p>
+            <p className="text-clever-black/40 italic">(no question captured)</p>
+          </div>
+        )}
 
         <div>
           <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
             Answered
           </p>
           {turn.answer ? (
-            <p className="whitespace-pre-wrap text-clever-black/80 text-sm leading-relaxed">
-              {turn.answer}
-            </p>
+            <div className="text-clever-black/80 text-sm leading-relaxed">
+              <MessageResponse>{turn.answer}</MessageResponse>
+            </div>
           ) : (
             <p className="text-clever-black/40 text-sm italic">(no answer text captured)</p>
           )}
