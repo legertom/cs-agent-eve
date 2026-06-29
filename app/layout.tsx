@@ -3,6 +3,7 @@ import { Inter, Merriweather } from "next/font/google";
 import type { ReactNode } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Nav } from "@/app/_components/nav";
+import { WelcomeModal } from "@/app/_components/welcome-modal";
 import "./globals.css";
 
 const heading = Merriweather({
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { readonly children: ReactNode 
         <TooltipProvider>
           <Nav />
           {children}
+          <WelcomeModal />
         </TooltipProvider>
       </body>
     </html>
