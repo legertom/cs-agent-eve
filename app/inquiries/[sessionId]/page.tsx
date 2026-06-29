@@ -10,9 +10,11 @@ import {
   ThumbsUpIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import type { EveMessage } from "eve/react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { InquiryFlag } from "@/app/_components/inquiry-flag";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { formatFeedbackDate, formatUsd, reasonBadgeClass, reasonLabel } from "@/lib/feedback";
 import {
@@ -38,7 +40,27 @@ export default async function InquiryThreadPage({ params }: Props) {
   if (turns.length === 0) notFound();
 
   const totalCost = turns.reduce((sum, t) => sum + t.totalCost, 0);
+  const retrievalCount = turns.reduce((sum, t) => sum + t.searchCount, 0);
   const channel = turns.find((t) => t.channel)?.channel ?? "";
+
+  // Reconstruct the conversation as chat messages so it can be flagged into the
+  // same review queue as a live-chat thread (text transcript; the retrieval
+  // trail stays visible here on the inquiry thread itself).
+  const messages: EveMessage[] = [];
+  for (const t of turns) {
+    if (t.question) {
+      messages.push({
+        id: `${t.turnId}-user`,
+        role: "user",
+        parts: [{ type: "text", text: t.question }],
+      });
+    }
+    messages.push({
+      id: `${t.turnId}-assistant`,
+      role: "assistant",
+      parts: [{ type: "text", text: t.answer || "(no answer captured)" }],
+    });
+  }
 
   return (
     <main className="bg-white text-clever-black">
@@ -73,6 +95,14 @@ export default async function InquiryThreadPage({ params }: Props) {
             <span>· started {formatFeedbackDate(turns[0].createdAt)}</span>
           </p>
           <p className="mt-2 break-all font-mono text-clever-black/35 text-xs">session {sessionId}</p>
+          <div className="mt-5">
+            <InquiryFlag
+              messages={messages}
+              persona="anyone"
+              retrievalCount={retrievalCount}
+              threadCost={totalCost}
+            />
+          </div>
         </div>
       </section>
 
