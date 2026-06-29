@@ -54,6 +54,12 @@ export function Nav() {
           >
             How it works
           </Link>
+          <Link
+            href="/changelog"
+            className="font-medium text-clever-blue text-sm transition-colors hover:text-clever-navy"
+          >
+            Changelog
+          </Link>
         </nav>
       </div>
     </header>

@@ -122,7 +122,11 @@ export default function AboutPage() {
               librarian who shows up early, reads every manual, and knows the gist of
               each before the doors open. And it doesn&apos;t read once and forget —
               every day it quietly re-reads the help center, so its answers keep up as
-              Clever&apos;s docs change.
+              Clever&apos;s docs change.{" "}
+              <Link className="text-clever-blue underline hover:text-clever-navy" href="/changelog">
+                See what&apos;s changed
+              </Link>
+              .
             </p>
             <div className="rounded-2xl bg-clever-light-blue/40 p-5">
               <div className="grid grid-cols-8 gap-1.5 sm:grid-cols-12">
