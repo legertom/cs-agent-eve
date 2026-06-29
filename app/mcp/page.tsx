@@ -11,7 +11,7 @@ import Link from "next/link";
 import { CopyBlock } from "@/app/_components/copy-block";
 
 export const metadata = {
-  title: "Use in VS Code (MCP) — Clever Support Assistant",
+  title: "Use in VS Code (MCP) — Clever Support Agent",
   description:
     "Connect the Clever Support knowledge base to VS Code over MCP — search and cited answers from inside Copilot agent mode, plus a copy-paste prompt that sets it up for you.",
 };

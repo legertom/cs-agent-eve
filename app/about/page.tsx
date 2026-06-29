@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 
 export const metadata = {
-  title: "How it works — Clever Support Assistant",
+  title: "How it works — Clever Support Agent",
   description:
     "Follow a real question from the moment it's typed to a plain-language answer with cited sources — then go under the hood: hybrid retrieval, a confidence gate, and the Vercel eve agent framework it's built on.",
 };
@@ -140,7 +140,7 @@ export default function AboutPage() {
             Watch a question find its answer.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-clever-black/60 text-lg leading-relaxed">
-            Meet the Clever Support Assistant — a friendly helper that has read
+            Meet the Clever Support Agent — a friendly helper that has read
             every article in Clever&apos;s help center, so you don&apos;t have to. Ask
             in plain words, right here in the browser, and follow your question step
             by step, all the way to a clear answer with the sources to prove it.{" "}

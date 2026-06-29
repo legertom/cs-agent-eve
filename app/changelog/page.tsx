@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Changelog — Clever Support Assistant",
+  title: "Changelog — Clever Support Agent",
   description:
     "When the assistant last re-synced Clever's help center, when its knowledge last actually changed, and an AI-written log of every article added, removed, or updated.",
 };

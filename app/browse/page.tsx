@@ -3,7 +3,7 @@ import kbData from "#data/kb.json" with { type: "json" };
 import { BrowseList } from "./browse-list";
 
 export const metadata = {
-  title: "Browse the help center — Clever Support Assistant",
+  title: "Browse the help center — Clever Support Agent",
   description:
     "Browse every Clever help-center article, filtered by who it's written for — admins, teachers, app partners, families, and more.",
 };

@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Flagged threads — Clever Support Assistant",
+  title: "Flagged threads — Clever Support Agent",
   description: "Threads the support team flagged for review while beta-testing the assistant.",
 };
 

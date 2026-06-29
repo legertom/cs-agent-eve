@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Inquiries — Clever Support Assistant",
+  title: "Inquiries — Clever Support Agent",
   description: "Every question asked of the assistant, with retrieval confidence and cost.",
 };
 

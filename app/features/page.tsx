@@ -27,9 +27,9 @@ import Link from "next/link";
 const GITHUB_URL = "https://github.com/legertom/cs-agent-eve";
 
 export const metadata = {
-  title: "Features — Clever Support Assistant",
+  title: "Features — Clever Support Agent",
   description:
-    "Everything the Clever Support Assistant can do at a glance — a hybrid + reranked RAG pipeline, a confidence gate that knows when to ask a human, and a live trust panel. Built on Vercel eve.",
+    "Everything the Clever Support Agent can do at a glance — a hybrid + reranked RAG pipeline, a confidence gate that knows when to ask a human, and a live trust panel. Built on Vercel eve.",
 };
 
 // Distinct eve / Vercel primitives this build demonstrates — the platform flex.

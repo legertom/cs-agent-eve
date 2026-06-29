@@ -48,7 +48,7 @@ export function SharedThread({ payload }: { readonly payload: SharedThreadPayloa
           />
 
           <p className="pt-2 text-center text-clever-black/40 text-xs">
-            Shared from the Clever Support Assistant · answers are generated from
+            Shared from the Clever Support Agent · answers are generated from
             Clever help-center articles. Always verify critical details.
           </p>
         </div>

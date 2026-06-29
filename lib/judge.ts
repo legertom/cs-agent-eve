@@ -19,7 +19,7 @@ export const JUDGE_MODEL = "anthropic/claude-haiku-4.5";
 // conservatively when a claim can't be verified from titles alone. Groundedness
 // is therefore a WEAK signal — surfaced as such in the dashboard.
 export const JUDGE_SYSTEM = [
-  "You are a strict evaluator of a customer-support assistant's answer.",
+  "You are a strict evaluator of a customer-support agent's answer.",
   "You are given the user's question, the assistant's answer, and the LIST OF SOURCES the assistant retrieved.",
   "Each source is ONLY a title and a URL — you do NOT have the article bodies.",
   "Judge whether the answer's claims are attributable to and consistent with those titled sources;",

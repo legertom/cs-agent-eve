@@ -105,7 +105,7 @@ export function Nav() {
             width={128}
           />
           <span aria-hidden="true" className="h-6 w-px bg-clever-light-blue" />
-          <span className="text-clever-black/60 text-sm">Support Assistant</span>
+          <span className="text-clever-black/60 text-sm">Support Agent</span>
         </Link>
 
         {/* Desktop: clustered single row */}

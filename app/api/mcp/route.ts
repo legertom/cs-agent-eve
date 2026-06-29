@@ -19,7 +19,7 @@ const DEFAULT_PROTOCOL = "2025-06-18";
 const ANSWER_MODEL = "anthropic/claude-sonnet-4.6";
 
 const ANSWER_SYSTEM = [
-  "You are Clever's support assistant. Answer questions about Clever using ONLY",
+  "You are Clever's support agent. Answer questions about Clever using ONLY",
   "the provided help-center article excerpts. Be concise and give step-by-step",
   "guidance. Always cite the source article URL(s) you used. If the provided",
   "articles don't actually answer the question, say so plainly and suggest",
@@ -54,7 +54,7 @@ const TOOLS = [
   {
     name: "ask_clever_support",
     description:
-      "Ask Clever's support assistant a question and get a synthesized, " +
+      "Ask Clever's support agent a question and get a synthesized, " +
       "plain-language answer grounded ONLY in the help center, with cited source " +
       "URLs and a confidence level. Use when you want a written answer rather " +
       "than raw search results.",

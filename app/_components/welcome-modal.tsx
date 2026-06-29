@@ -48,7 +48,7 @@ export function WelcomeModal() {
             Beta
           </span>
           <DialogTitle className="mt-2 font-normal text-2xl text-clever-navy">
-            Thanks for testing the Support Assistant
+            Thanks for testing the Support Agent
           </DialogTitle>
           <DialogDescription className="text-clever-black/60 text-sm leading-relaxed">
             You&apos;re trying an early beta. Every answer is grounded in Clever&apos;s help

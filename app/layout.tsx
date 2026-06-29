@@ -20,7 +20,7 @@ const body = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Clever Support Assistant",
+  title: "Clever Support Agent",
   description:
     "AI-powered assistant for Clever support. Get instant answers about SSO, rostering, logins, and admin setup — grounded in the Clever help center.",
 };
