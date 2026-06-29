@@ -1,4 +1,5 @@
 import {
+  ChevronRightIcon,
   CoinsIcon,
   MessageSquareIcon,
   PencilIcon,
@@ -58,6 +59,7 @@ export default async function InquiriesPage() {
 
           <p className="text-clever-black/40 text-sm">
             {items.length} {items.length === 1 ? "inquiry" : "inquiries"} (most recent)
+            {items.length > 0 ? " · open one to see its full thread" : null}
           </p>
 
           {items.length === 0 ? (
@@ -91,40 +93,46 @@ export default async function InquiriesPage() {
 function InquiryRow({ item }: { readonly item: InquirySummary }) {
   const weak = item.searchCount > 0 && (item.topConfidence === "low" || item.topConfidence === "unscored");
   return (
-    <li className="flex flex-col gap-1.5 px-4 py-3.5">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate font-medium text-clever-navy text-sm">
-          {item.question || "(no question captured)"}
-        </span>
-        {weak ? (
-          <span
-            className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clever-orange/10 px-2 py-0.5 font-medium text-[10px] text-clever-orange"
-            title="Answered with weak grounding (best retrieval was low/unscored)"
-          >
-            <ShieldAlertIcon className="size-3" />
-            low confidence
+    <li>
+      <Link
+        className="group flex flex-col gap-1.5 px-4 py-3.5 transition-colors hover:bg-clever-light-blue/30"
+        href={`/inquiries/${encodeURIComponent(item.sessionId)}#turn-${item.turnId}`}
+      >
+        <div className="flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate font-medium text-clever-navy text-sm">
+            {item.question || "(no question captured)"}
           </span>
+          {weak ? (
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clever-orange/10 px-2 py-0.5 font-medium text-[10px] text-clever-orange"
+              title="Answered with weak grounding (best retrieval was low/unscored)"
+            >
+              <ShieldAlertIcon className="size-3" />
+              low confidence
+            </span>
+          ) : null}
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">
+            <CoinsIcon className="size-3 text-clever-blue/60" />
+            {formatUsd(item.totalCost)}
+          </span>
+          <ChevronRightIcon className="size-4 shrink-0 text-clever-black/25 transition-colors group-hover:text-clever-blue" />
+        </div>
+        {item.answer ? (
+          <p className="line-clamp-2 text-clever-black/55 text-sm">{item.answer}</p>
         ) : null}
-        <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-clever-light-blue/40 px-2 py-0.5 font-medium text-[11px] text-clever-black/55 tabular-nums">
-          <CoinsIcon className="size-3 text-clever-blue/60" />
-          {formatUsd(item.totalCost)}
-        </span>
-      </div>
-      {item.answer ? (
-        <p className="line-clamp-2 text-clever-black/55 text-sm">{item.answer}</p>
-      ) : null}
-      <SignalChips item={item} />
-      <div className="flex flex-wrap items-center gap-x-2 text-clever-black/40 text-xs">
-        <span>{formatFeedbackDate(item.createdAt)}</span>
-        <span>· {channelLabel(item.channel)}</span>
-        <span>
-          ·{" "}
-          {item.searchCount === 0
-            ? "no search"
-            : `${item.searchCount} search${item.searchCount === 1 ? "" : "es"}`}
-        </span>
-        {item.searchCount > 0 ? <span>· {item.topConfidence} confidence</span> : null}
-      </div>
+        <SignalChips item={item} />
+        <div className="flex flex-wrap items-center gap-x-2 text-clever-black/40 text-xs">
+          <span>{formatFeedbackDate(item.createdAt)}</span>
+          <span>· {channelLabel(item.channel)}</span>
+          <span>
+            ·{" "}
+            {item.searchCount === 0
+              ? "no search"
+              : `${item.searchCount} search${item.searchCount === 1 ? "" : "es"}`}
+          </span>
+          {item.searchCount > 0 ? <span>· {item.topConfidence} confidence</span> : null}
+        </div>
+      </Link>
     </li>
   );
 }

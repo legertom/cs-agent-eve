@@ -310,6 +310,112 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
   }
 }
 
+// One search's ranked sources, pulled from the stored payload for the thread view.
+export type InquiryTurnSource = {
+  readonly rank?: number;
+  readonly title?: string;
+  readonly url?: string;
+  readonly score?: number | null;
+};
+export type InquiryTurnSearch = {
+  readonly query?: string;
+  readonly method?: string;
+  readonly count?: number;
+  readonly confidence?: {
+    readonly level?: string;
+    readonly topScore?: number | null;
+    readonly margin?: number | null;
+  };
+  readonly sources?: ReadonlyArray<InquiryTurnSource>;
+};
+
+// A single turn with its full retrieval trail — what the thread detail view needs.
+export type SessionInquiryTurn = InquirySummary & {
+  readonly searches: ReadonlyArray<InquiryTurnSearch>;
+  readonly judgeVerdict?: string | null;
+};
+
+function extractSearches(payload: unknown): InquiryTurnSearch[] {
+  const searches = (payload as { searches?: unknown })?.searches;
+  if (!Array.isArray(searches)) return [];
+  return searches as InquiryTurnSearch[];
+}
+
+// All turns for one session, oldest first — reconstructs the full thread from the
+// per-turn log (every turn is keyed by session_id, so the session's rows ARE the
+// conversation). Same signal join as the dashboard list, plus the payload searches
+// and judge verdict so each turn can show its retrieval trail.
+export async function listSessionInquiries(sessionId: string): Promise<SessionInquiryTurn[]> {
+  try {
+    await ensureSchema();
+    await ensureAnswerFeedbackSchema();
+    const sql = getSql();
+    const rows = (await sql`
+      SELECT i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
+             i.search_count, i.top_confidence, i.total_cost, i.payload,
+             i.judge_groundedness, i.judge_relevance, i.judge_hallucination,
+             i.judge_verdict, i.judged_at,
+             COUNT(*) FILTER (WHERE af.kind = 'up')::int   AS up,
+             COUNT(*) FILTER (WHERE af.kind = 'down')::int AS down,
+             COUNT(*) FILTER (WHERE af.kind = 'edit')::int AS edits,
+             (ARRAY_AGG(af.reason ORDER BY af.created_at DESC)
+                FILTER (WHERE af.kind = 'down' AND af.reason IS NOT NULL))[1] AS down_reason
+      FROM inquiries i
+      LEFT JOIN answer_feedback af
+        ON af.session_id = i.session_id AND af.turn_id = i.turn_id
+      WHERE i.session_id = ${sessionId}
+      GROUP BY i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
+               i.search_count, i.top_confidence, i.total_cost, i.payload,
+               i.judge_groundedness, i.judge_relevance, i.judge_hallucination,
+               i.judge_verdict, i.judged_at
+      ORDER BY i.created_at ASC
+    `) as Array<{
+      session_id: string;
+      turn_id: string;
+      created_at: string;
+      channel: string;
+      question: string;
+      answer: string;
+      search_count: number;
+      top_confidence: string;
+      total_cost: number;
+      payload: unknown;
+      judge_groundedness: number | null;
+      judge_relevance: number | null;
+      judge_hallucination: boolean | null;
+      judge_verdict: string | null;
+      judged_at: string | null;
+      up: number;
+      down: number;
+      edits: number;
+      down_reason: string | null;
+    }>;
+    return rows.map((r) => ({
+      sessionId: r.session_id,
+      turnId: r.turn_id,
+      createdAt: new Date(r.created_at).toISOString(),
+      channel: r.channel,
+      question: r.question,
+      answer: r.answer,
+      searchCount: r.search_count,
+      topConfidence: r.top_confidence,
+      totalCost: r.total_cost,
+      searches: extractSearches(r.payload),
+      judged: r.judged_at != null,
+      judgeGroundedness: r.judge_groundedness,
+      judgeRelevance: r.judge_relevance,
+      judgeHallucination: r.judge_hallucination,
+      judgeVerdict: r.judge_verdict,
+      up: r.up,
+      down: r.down,
+      edits: r.edits,
+      downReason: r.down_reason,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 // --- LLM-as-judge auto-eval (C) ---
 
 // Rows the judge still needs to score. Poison-row guard: skip rows that already
