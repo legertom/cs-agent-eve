@@ -1,10 +1,13 @@
 import {
+  ActivityIcon,
   ArrowRightIcon,
   BadgeCheckIcon,
   BotIcon,
+  CodeIcon,
   GaugeCircleIcon,
   GraduationCapIcon,
   HandIcon,
+  HashIcon,
   LayersIcon,
   LineChartIcon,
   type LucideIcon,
@@ -12,12 +15,16 @@ import {
   PlugIcon,
   RefreshCwIcon,
   UsersIcon,
+  ScaleIcon,
   ScanSearchIcon,
   ShieldCheckIcon,
   SparklesIcon,
+  ThumbsUpIcon,
   TicketIcon,
 } from "lucide-react";
 import Link from "next/link";
+
+const GITHUB_URL = "https://github.com/legertom/cs-agent-eve";
 
 export const metadata = {
   title: "Features — Clever Support Assistant",
@@ -85,9 +92,9 @@ const LIVE: Feature[] = [
   },
   {
     icon: MessagesSquareIcon,
-    title: "One brain, two channels",
+    title: "One brain, every surface",
     blurb:
-      "The same agent, knowledge base, and voice answer in Discord and in a branded web chat. Durable sessions hold the thread across follow-ups and survive restarts.",
+      "The same agent, knowledge base, and voice answer in a branded web chat and — over MCP — right inside your editor. Durable sessions hold the thread across follow-ups and survive restarts.",
     tags: ["Multi-channel", "Durable sessions"],
   },
   {
@@ -111,10 +118,38 @@ const LIVE: Feature[] = [
       "A daily eve Schedule re-crawls and re-embeds Clever's help center and hot-swaps it into live search through Vercel Blob — so new and updated articles show up with no rebuild and no redeploy.",
     tags: ["Schedules", "Knowledge base"],
   },
+  {
+    icon: ThumbsUpIcon,
+    title: "Human feedback, captured",
+    blurb:
+      "Every answer takes a 👍 / 👎 — and a 👎 opens a quick reason plus an expert-correction box. Those signals land in the review queue and the eval set, so the team's judgment trains the bot.",
+    tags: ["Human-in-the-loop", "Evals"],
+  },
+  {
+    icon: ScaleIcon,
+    title: "LLM-as-judge auto-eval",
+    blurb:
+      "A scheduled judge scores every logged answer for groundedness, relevance, and possible hallucination — an automatic quality signal across the whole denominator, not just the flagged turns.",
+    tags: ["Schedules", "Evals"],
+  },
+  {
+    icon: ActivityIcon,
+    title: "Every turn, logged",
+    blurb:
+      "Each question is logged with its retrieval confidence and token cost to a usage dashboard — what's being asked, how well it's grounded, and what it costs to answer.",
+    tags: ["Agent Runs", "Knowledge base"],
+  },
 ];
 
 // On the roadmap — from the feature backlog, sized for what's next.
 const NEXT: Feature[] = [
+  {
+    icon: HashIcon,
+    title: "Slack workspace app",
+    blurb:
+      "Bring the same grounded, cited answers into Slack — ask in a thread or a DM and get a reply with its sources, so support lives where the team already works.",
+    tags: ["Multi-channel", "Durable sessions"],
+  },
   {
     icon: SparklesIcon,
     title: "Jargon decoder + query expansion",
@@ -260,12 +295,23 @@ export default function FeaturesPage() {
             sources, and — on a tricky one — the agent stop to ask before it
             answers.
           </p>
-          <Link
-            className="mt-8 inline-flex items-center gap-2 rounded-full bg-clever-blue px-6 py-3 font-medium text-white transition-colors hover:bg-white hover:text-clever-navy"
-            href="/"
-          >
-            Open the assistant <ArrowRightIcon className="size-4" />
-          </Link>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              className="inline-flex items-center gap-2 rounded-full bg-clever-blue px-6 py-3 font-medium text-white transition-colors hover:bg-white hover:text-clever-navy"
+              href="/"
+            >
+              Open the assistant <ArrowRightIcon className="size-4" />
+            </Link>
+            <a
+              className="inline-flex items-center gap-2 rounded-full border border-white/25 px-6 py-3 font-medium text-clever-light-blue transition-colors hover:bg-white/10 hover:text-white"
+              href={GITHUB_URL}
+              rel="noreferrer"
+              target="_blank"
+            >
+              <CodeIcon className="size-4" />
+              View the source on GitHub
+            </a>
+          </div>
         </div>
       </section>
     </main>

@@ -51,6 +51,15 @@ support knowledge base from VS Code.
 const TEST_PROMPT = `Using the clever-support tools, how do I set up Google SSO in Clever?
 Give me the steps and cite the help-center article you used.`;
 
+const DOCS_URL = "https://clever-support-agent.vercel.app/mcp";
+
+const CLAUDE_CODE_CLI = `claude mcp add --transport http clever-support ${MCP_URL}`;
+
+const CLAUDE_CODE_PROMPT = `Read ${DOCS_URL} and add the "clever-support" MCP server to this
+project exactly as that page describes. It's a public HTTP MCP server — no auth
+header is needed. After adding it, list its tools and run one quick search to
+confirm it's connected.`;
+
 function StepLabel({ children }: { readonly children: React.ReactNode }) {
   return (
     <p className="mb-1 font-semibold text-clever-blue text-xs uppercase tracking-wider">
@@ -183,6 +192,22 @@ export default function McpPage() {
               </p>
             </div>
             <CopyBlock code={SETUP_PROMPT} label="Setup prompt" />
+          </div>
+
+          {/* Claude Code */}
+          <div className="space-y-3">
+            <div>
+              <StepLabel>Using Claude Code?</StepLabel>
+              <p className="text-clever-black/60 text-sm leading-relaxed">
+                Claude Code can add it directly — one command, no config file:
+              </p>
+            </div>
+            <CopyBlock code={CLAUDE_CODE_CLI} label="terminal" />
+            <p className="text-clever-black/60 text-sm leading-relaxed">
+              Or just point it at this page and let it read the instructions itself —
+              Claude Code can fetch a URL, so paste this into a session:
+            </p>
+            <CopyBlock code={CLAUDE_CODE_PROMPT} label="Claude Code prompt" />
           </div>
 
           {/* Try it */}

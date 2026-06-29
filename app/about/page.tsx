@@ -3,20 +3,106 @@ import {
   ArrowRightIcon,
   BookOpenCheckIcon,
   CheckCircle2Icon,
+  CodeIcon,
   FingerprintIcon,
+  GaugeCircleIcon,
+  HandIcon,
+  LayersIcon,
   Link2Icon,
+  type LucideIcon,
   MessageSquareTextIcon,
+  RefreshCwIcon,
+  ScanSearchIcon,
   ShieldCheckIcon,
+  SparklesIcon,
 } from "lucide-react";
 
 export const metadata = {
   title: "How it works — Clever Support Assistant",
   description:
-    "Follow a real question from the moment it's typed to a plain-language answer with cited sources. A friendly, no-jargon tour of how the Clever Support Assistant works.",
+    "Follow a real question from the moment it's typed to a plain-language answer with cited sources — then go under the hood: hybrid retrieval, a confidence gate, and the Vercel eve agent framework it's built on.",
 };
 
 // Number of help-center articles in the knowledge base.
 const ARTICLE_COUNT = "525";
+const GITHUB_URL = "https://github.com/legertom/cs-agent-eve";
+
+const TOC = [
+  { href: "#how-it-answers", label: "How it answers" },
+  { href: "#under-the-hood", label: "Under the hood" },
+  { href: "#built-on-eve", label: "Built on Vercel eve" },
+];
+
+// The real pipeline, one rung deeper than the friendly walkthrough.
+const INTERNALS: { icon: LucideIcon; term: string; body: React.ReactNode }[] = [
+  {
+    icon: LayersIcon,
+    term: "Hybrid, reranked retrieval",
+    body: (
+      <>
+        Two searches run at once — classic keyword matching (BM25) and
+        meaning-based semantic search — and their results are fused with{" "}
+        <em>Reciprocal Rank Fusion</em>. A dedicated reranker (a Cohere
+        cross-encoder) then re-scores the finalists for true relevance. Three AI
+        providers cooperate behind a single Vercel AI Gateway, so the best of
+        keyword precision and semantic recall both count.
+      </>
+    ),
+  },
+  {
+    icon: HandIcon,
+    term: "A confidence gate that asks a human",
+    body: (
+      <>
+        Retrieval returns a calibrated confidence band, not just results. When
+        confidence is low, the top two articles are too close to call, or the
+        topic is high-stakes (billing, data deletion, SSO security), the agent{" "}
+        <strong className="text-clever-navy">pauses mid-answer and asks a
+        clarifying question</strong>{" "}
+        instead of guessing — and it can hold that pause durably, picking the
+        thread back up when you reply.
+      </>
+    ),
+  },
+  {
+    icon: ScanSearchIcon,
+    term: "It shows its work",
+    body: (
+      <>
+        Every web answer carries an inline trust panel: the confidence band, the
+        exact ranked sources, and the reranker scores that chose them. Nothing
+        about the retrieval is hidden — you can see precisely what an answer was
+        built on.
+      </>
+    ),
+  },
+  {
+    icon: RefreshCwIcon,
+    term: "Knowledge that stays fresh",
+    body: (
+      <>
+        A scheduled job re-crawls and re-embeds Clever&apos;s help center every
+        day and hot-swaps it into live search through Vercel Blob — new and
+        updated articles show up the next day with no rebuild and no redeploy.{" "}
+        <Link className="text-clever-blue underline hover:text-clever-navy" href="/changelog">
+          See what&apos;s changed
+        </Link>
+        .
+      </>
+    ),
+  },
+  {
+    icon: GaugeCircleIcon,
+    term: "Everything is traced",
+    body: (
+      <>
+        Every session, tool call, and token is recorded — so any answer can be
+        replayed end to end, and the team can see exactly where to tune
+        retrieval or close a knowledge gap.
+      </>
+    ),
+  },
+];
 
 function StepLabel({ children }: { readonly children: React.ReactNode }) {
   return (
@@ -40,7 +126,7 @@ export default function AboutPage() {
   return (
     <main className="bg-white text-clever-black">
       {/* Hero */}
-      <section className="relative overflow-hidden px-6 pt-20 pb-16">
+      <section className="relative overflow-hidden px-6 pt-20 pb-10">
         <div
           aria-hidden="true"
           className="clever-blob-1 -right-10 absolute top-0 h-48 w-48 bg-clever-yellow/30 blur-2xl"
@@ -54,11 +140,11 @@ export default function AboutPage() {
             Watch a question find its answer.
           </h1>
           <p className="mx-auto mt-6 max-w-xl text-clever-black/60 text-lg leading-relaxed">
-            Meet the Clever Support Assistant — a friendly helper that has read{" "}
-            every article in Clever&apos;s help center, so you don&apos;t have to.
-            Ask in plain words on Discord or right here in the browser, and follow
-            your question step by step, all the way to a clear answer with the
-            sources to prove it. <span className="text-clever-navy">No guessing.</span>
+            Meet the Clever Support Assistant — a friendly helper that has read
+            every article in Clever&apos;s help center, so you don&apos;t have to. Ask
+            in plain words, right here in the browser, and follow your question step
+            by step, all the way to a clear answer with the sources to prove it.{" "}
+            <span className="text-clever-navy">No guessing.</span>
           </p>
           <Link
             className="mt-8 inline-flex items-center gap-2 rounded-full bg-clever-blue px-6 py-3 font-medium text-white transition-colors hover:bg-clever-navy"
@@ -69,8 +155,25 @@ export default function AboutPage() {
         </div>
       </section>
 
+      {/* Mini table of contents */}
+      <nav
+        aria-label="On this page"
+        className="mx-auto mb-12 flex max-w-2xl flex-wrap items-center justify-center gap-2 px-6"
+      >
+        <span className="text-clever-black/40 text-xs uppercase tracking-wider">On this page</span>
+        {TOC.map((t) => (
+          <a
+            className="rounded-full border border-clever-light-blue bg-clever-light-blue/30 px-3 py-1 font-medium text-clever-navy text-sm transition-colors hover:border-clever-blue/40 hover:bg-clever-light-blue/60"
+            href={t.href}
+            key={t.href}
+          >
+            {t.label}
+          </a>
+        ))}
+      </nav>
+
       {/* The journey, threaded by a dotted spine */}
-      <section className="px-6 pb-8">
+      <section className="scroll-mt-6 px-6 pb-8" id="how-it-answers">
         <div className="mx-auto max-w-2xl space-y-12 border-clever-navy/20 border-l-2 border-dashed pl-8">
           {/* Step 1 */}
           <Step n={1}>
@@ -85,24 +188,9 @@ export default function AboutPage() {
               No special wording, no menus to dig through — just ask like you&apos;d
               ask the knowledgeable colleague down the hall.
             </p>
-            <div className="relative">
-              <div className="mb-3 flex gap-2">
-                <span className="rounded-full bg-clever-light-blue px-3 py-1 text-clever-navy text-xs">
-                  Discord
-                </span>
-                <span className="rounded-full bg-clever-light-blue px-3 py-1 text-clever-navy text-xs">
-                  Web chat
-                </span>
-                <span className="self-center text-clever-black/40 text-xs">
-                  one helper, two homes
-                </span>
-              </div>
-              <div className="-rotate-1 inline-flex max-w-md items-start gap-3 rounded-2xl bg-clever-blue px-5 py-3 text-white shadow-sm">
-                <MessageSquareTextIcon className="mt-0.5 size-5 shrink-0 opacity-80" />
-                <span>
-                  Why do students keep getting logged out on shared Chromebooks?
-                </span>
-              </div>
+            <div className="-rotate-1 inline-flex max-w-md items-start gap-3 rounded-2xl bg-clever-blue px-5 py-3 text-white shadow-sm">
+              <MessageSquareTextIcon className="mt-0.5 size-5 shrink-0 opacity-80" />
+              <span>Why do students keep getting logged out on shared Chromebooks?</span>
             </div>
           </Step>
 
@@ -229,7 +317,7 @@ export default function AboutPage() {
           </Step>
 
           {/* Step 5 */}
-          <Step n={5}>
+          <Step last n={5}>
             <StepLabel>Step 5 · It&apos;s honest</StepLabel>
             <h2 className="mb-3 font-normal text-2xl text-clever-navy">
               And when it doesn&apos;t know? It says so
@@ -264,38 +352,105 @@ export default function AboutPage() {
               </div>
             </div>
           </Step>
+        </div>
+      </section>
 
-          {/* Step 6 */}
-          <Step n={6} last>
-            <StepLabel>The foundation</StepLabel>
-            <h2 className="mb-3 font-normal text-2xl text-clever-navy">
-              One brain, two homes — and it remembers
+      {/* Under the hood */}
+      <section className="scroll-mt-6 px-6 py-12" id="under-the-hood">
+        <div className="mx-auto max-w-2xl">
+          <div className="mb-8">
+            <StepLabel>Under the hood</StepLabel>
+            <h2 className="font-normal text-3xl text-clever-navy">
+              The friendly version, one rung deeper
             </h2>
-            <p className="mb-5 text-clever-black/70 leading-relaxed">
-              Whether you meet it in Discord or in the web chat, it&apos;s the exact
-              same helper with the exact same library — built on Vercel&apos;s{" "}
-              <strong className="text-clever-navy">eve</strong> agent framework. That
-              shared foundation is also why it holds the thread of your conversation:
-              ask a follow-up and it remembers what you were just talking about, so you
-              never have to repeat yourself.
+            <p className="mt-2 text-clever-black/60 leading-relaxed">
+              The walkthrough above is the honest gist. If you want the real
+              mechanics — the parts that make the answers trustworthy — here&apos;s
+              what&apos;s actually happening each time you ask.
             </p>
-            <div className="grid grid-cols-2 gap-3">
-              {["Discord", "Web chat"].map((home) => (
-                <div
-                  key={home}
-                  className="rounded-2xl border border-clever-light-blue bg-clever-light-blue/20 p-4 text-center"
-                >
-                  <p className="font-medium text-clever-navy text-sm">{home}</p>
-                  <p className="mt-1 text-clever-black/40 text-xs">same brain, same docs</p>
+          </div>
+          <ul className="space-y-5">
+            {INTERNALS.map(({ icon: Icon, term, body }) => (
+              <li
+                className="flex gap-4 rounded-2xl border border-clever-light-blue bg-white p-5"
+                key={term}
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-clever-light-blue/50 text-clever-blue">
+                  <Icon className="size-5" />
+                </span>
+                <div>
+                  <h3 className="font-medium text-clever-navy">{term}</h3>
+                  <p className="mt-1 text-clever-black/60 text-sm leading-relaxed">{body}</p>
                 </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </section>
+
+      {/* Built on Vercel eve */}
+      <section className="scroll-mt-6 px-6 pb-16" id="built-on-eve">
+        <div className="mx-auto max-w-2xl">
+          <div className="rounded-3xl border border-clever-light-blue bg-clever-light-blue/20 p-7 sm:p-9">
+            <p className="inline-flex items-center gap-1.5 font-semibold text-clever-blue text-xs uppercase tracking-wider">
+              <SparklesIcon className="size-3.5" />
+              The foundation
+            </p>
+            <h2 className="mt-2 font-normal text-3xl text-clever-navy">
+              Built on the Vercel eve agent framework
+            </h2>
+            <p className="mt-3 text-clever-black/70 leading-relaxed">
+              All of this runs on{" "}
+              <strong className="text-clever-navy">Vercel eve</strong> — an agent
+              framework that handles the hard parts so the assistant can focus on good
+              answers. eve is why it can hold the thread of a conversation across
+              follow-ups and survive restarts (durable sessions), pause to ask a human
+              and resume later (human-in-the-loop), call retrieval as a tool, re-crawl
+              the help center on a schedule, and expose that same retrieval brain over
+              MCP so it works inside your editor too. One framework, one knowledge base,
+              one voice — wherever you meet it.
+            </p>
+            <div className="mt-5 flex flex-wrap gap-2">
+              {[
+                "Durable sessions",
+                "Human-in-the-loop",
+                "Tools",
+                "Schedules",
+                "AI Gateway",
+                "MCP",
+                "Agent Runs",
+              ].map((p) => (
+                <span
+                  key={p}
+                  className="rounded-full border border-clever-navy/15 bg-white px-3 py-1 text-clever-navy/70 text-xs"
+                >
+                  {p}
+                </span>
               ))}
             </div>
-          </Step>
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a
+                className="inline-flex items-center gap-2 rounded-full bg-clever-navy px-5 py-2.5 font-medium text-sm text-white transition-colors hover:bg-clever-blue"
+                href={GITHUB_URL}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <CodeIcon className="size-4" />
+                Read the source on GitHub
+              </a>
+              <Link
+                className="inline-flex items-center gap-2 rounded-full border border-clever-navy/20 px-5 py-2.5 font-medium text-clever-navy text-sm transition-colors hover:bg-white"
+                href="/features"
+              >
+                See every feature <ArrowRightIcon className="size-4" />
+              </Link>
+            </div>
+          </div>
         </div>
       </section>
 
       {/* Closing CTA */}
-      <section className="relative mt-8 overflow-hidden bg-clever-navy px-6 py-16 text-center">
+      <section className="relative overflow-hidden bg-clever-navy px-6 py-16 text-center">
         <div
           aria-hidden="true"
           className="clever-blob-3 absolute top-4 right-10 h-32 w-32 bg-clever-blue/30 blur-2xl"
