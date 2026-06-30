@@ -2,15 +2,20 @@
 
 import type { EveMessage } from "eve/react";
 import { useEveAgent } from "eve/react";
-import { AlertCircleIcon, CheckIcon, FlagIcon, Share2Icon } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { AlertCircleIcon, CheckIcon, FlagIcon, Share2Icon, SparklesIcon, XIcon } from "lucide-react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { priceInferenceUsage } from "@/lib/inference-cost";
 import { firstUserText } from "@/lib/shared-thread";
 import { cn } from "@/lib/utils";
 import { AgentMessage } from "./agent-message";
 import { FeedbackForm } from "./feedback-form";
-import { retrievalCostTotal } from "./support-search-panel";
+import { isSupportSearchOutput, retrievalCostTotal } from "./support-search-panel";
 import { ThreadWorkPanel } from "./thread-work-panel";
+
+// Normalize a source URL for set comparison: drop hash/query and a trailing slash.
+function normalizeUrl(url: string): string {
+  return url.split("#")[0].split("?")[0].replace(/\/+$/, "").toLowerCase();
+}
 
 const SUGGESTED_QUESTIONS = [
   "How do I set up Google SSO?",
@@ -108,7 +113,48 @@ export function AgentChat() {
   const [shareState, setShareState] = useState<"idle" | "sharing" | "copied" | "error">("idle");
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [dismissedNudge, setDismissedNudge] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Retrieval fingerprint per searched turn: the set of normalized source URLs it
+  // pulled. A new, unrelated inquiry retrieves different articles than the prior
+  // one — so when the newest searched turn shares ZERO sources with the previous
+  // searched turn, the user has almost certainly started a new question without
+  // opening a fresh thread. A genuine follow-up re-pulls overlapping sources (or
+  // runs no new search) and never triggers this.
+  const searchedTurns = useMemo(() => {
+    const turns: Array<{ id: string; urls: Set<string> }> = [];
+    for (const message of agent.data.messages) {
+      if (message.role !== "assistant") continue;
+      const urls = new Set<string>();
+      for (const part of message.parts) {
+        if (
+          part.type === "dynamic-tool" &&
+          part.toolName === "search_support" &&
+          isSupportSearchOutput(part.output)
+        ) {
+          for (const r of part.output.results ?? []) {
+            if (r.url) urls.add(normalizeUrl(r.url));
+          }
+        }
+      }
+      if (urls.size > 0) turns.push({ id: message.id, urls });
+    }
+    return turns;
+  }, [agent.data.messages]);
+
+  // The newest searched turn's id when its sources are disjoint from the previous
+  // searched turn's (a topic change), else null.
+  const topicShiftTurnId = useMemo(() => {
+    if (searchedTurns.length < 2) return null;
+    const cur = searchedTurns[searchedTurns.length - 1];
+    const prev = searchedTurns[searchedTurns.length - 2];
+    for (const u of cur.urls) if (prev.urls.has(u)) return null; // any overlap → same inquiry
+    return cur.id;
+  }, [searchedTurns]);
+
+  // One-shot per turn: only nudge when idle, on a real shift, not yet dismissed.
+  const showNudge = !isBusy && topicShiftTurnId != null && dismissedNudge !== topicShiftTurnId;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -139,6 +185,7 @@ export function AgentChat() {
       : undefined;
     void agent.send(clientContext ? { message: trimmed, clientContext } : { message: trimmed });
     setInput("");
+    setDismissedNudge(null);
   }
 
   function handleSubmit(e: FormEvent) {
@@ -152,6 +199,7 @@ export function AgentChat() {
     setShareState("idle");
     setShareUrl(null);
     setShowFeedback(false);
+    setDismissedNudge(null);
   }
 
   // Snapshot the current thread to a shareable, read-only URL and copy it.
@@ -237,7 +285,7 @@ export function AgentChat() {
                         : "Share"}
                 </button>
                 <button
-                  aria-label="Start a new conversation"
+                  aria-label="Start a new inquiry"
                   className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/50"
                   onClick={resetChat}
                   type="button"
@@ -270,7 +318,7 @@ export function AgentChat() {
                     strokeLinejoin="round"
                   />
                 </svg>
-                New chat
+                New inquiry
                 </button>
               </div>
               </div>
@@ -388,6 +436,32 @@ export function AgentChat() {
 
       {/* Input */}
       <footer className="shrink-0 border-clever-light-blue border-t bg-white px-6 py-4">
+        {showNudge && topicShiftTurnId ? (
+          <div className="mx-auto mb-3 flex max-w-3xl items-start gap-3 rounded-xl border border-clever-light-blue bg-clever-yellow/10 px-4 py-3">
+            <SparklesIcon className="mt-0.5 size-4 shrink-0 text-clever-blue" />
+            <div className="min-w-0 flex-1">
+              <p className="text-clever-navy text-sm">
+                Looks like a new question. Start a fresh thread to keep answers sharp
+                and costs down — the assistant won't carry over the earlier topic.
+              </p>
+              <button
+                className="mt-2 inline-flex items-center gap-1.5 rounded-lg bg-clever-blue px-3 py-1.5 font-medium text-sm text-white transition-colors hover:bg-clever-navy"
+                onClick={resetChat}
+                type="button"
+              >
+                Start fresh thread
+              </button>
+            </div>
+            <button
+              aria-label="Dismiss"
+              className="shrink-0 rounded-md p-1 text-clever-black/40 transition-colors hover:bg-clever-light-blue/50 hover:text-clever-navy"
+              onClick={() => setDismissedNudge(topicShiftTurnId)}
+              type="button"
+            >
+              <XIcon className="size-4" />
+            </button>
+          </div>
+        ) : null}
         <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2">
           <span className="text-clever-black/40 text-xs">Answering for</span>
           {PERSONAS.map((p) => (

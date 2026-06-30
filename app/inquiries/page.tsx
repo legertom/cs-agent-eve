@@ -58,8 +58,8 @@ export default async function InquiriesPage() {
           {stats.total > 0 ? <AnalyticsDashboard stats={stats} /> : null}
 
           <p className="text-clever-black/40 text-sm">
-            {items.length} {items.length === 1 ? "inquiry" : "inquiries"} (most recent)
-            {items.length > 0 ? " · open one to see its full thread" : null}
+            {items.length} {items.length === 1 ? "turn" : "turns"} (most recent)
+            {items.length > 0 ? " · open one to see its full thread, split by inquiry" : null}
           </p>
 
           {items.length === 0 ? (
@@ -216,7 +216,7 @@ function AnalyticsDashboard({ stats }: { readonly stats: InquiryAnalytics }) {
   return (
     <div className="space-y-4 rounded-xl border border-clever-light-blue bg-clever-light-blue/15 p-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total inquiries" value={String(stats.total)} />
+        <Stat label="Inquiries" value={String(stats.distinctInquiries)} />
         <Stat label="Last 7 days" value={String(stats.last7Days)} />
         <Stat
           accent={stats.lowConfidenceCount > 0}
@@ -230,7 +230,8 @@ function AnalyticsDashboard({ stats }: { readonly stats: InquiryAnalytics }) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Stat label="Turns logged" value={String(stats.total)} />
         <Stat
           icon={<CoinsIcon className="size-3 text-clever-blue/60" />}
           label="Total spend"

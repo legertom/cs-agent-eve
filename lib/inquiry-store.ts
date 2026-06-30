@@ -102,6 +102,10 @@ export type InquiryJudgment = {
 // and how often are we answering with weak grounding (or no search at all)?"
 export type InquiryAnalytics = {
   readonly total: number;
+  // Distinct inquiries (session, inquiry_no) once segmented — unsegmented sessions
+  // count as one each until the Haiku batch splits them. The honest "how many
+  // separate questions" denominator, vs `total` which counts every turn.
+  readonly distinctInquiries: number;
   readonly last7Days: number;
   readonly totalCost: number;
   readonly avgCost: number;
@@ -169,6 +173,15 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judged_at timestamptz`;
       await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_attempts integer NOT NULL DEFAULT 0`;
       await sql`CREATE INDEX IF NOT EXISTS inquiries_judged_at_idx ON inquiries (judged_at DESC) WHERE judged_at IS NOT NULL`;
+      // Inquiry segmentation (D). A session is N distinct inquiries when users
+      // stack unrelated questions in one thread; these columns let the dashboard
+      // group a session by its real inquiries. inquiry_no is NULL until the Haiku
+      // batch (lib/inquiry-segment.ts) stamps it — NULL means "not yet segmented"
+      // and is the work signal for the segment batch (a new turn re-NULLs nothing,
+      // it just arrives NULL, which re-qualifies the whole session for re-segment).
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS inquiry_no integer`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS inquiry_title text`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS segment_attempts integer NOT NULL DEFAULT 0`;
     })().catch((err) => {
       schemaReady = null; // don't cache a failed init
       throw err;
@@ -244,6 +257,7 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
       sql`
         SELECT
           COUNT(*)::int AS total,
+          COUNT(DISTINCT (session_id, COALESCE(inquiry_no, 1)))::int AS distinct_inquiries,
           COUNT(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS last7,
           COALESCE(SUM(total_cost), 0)::float8 AS total_cost,
           COALESCE(AVG(total_cost), 0)::float8 AS avg_cost,
@@ -273,6 +287,7 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
     const h = (human as Array<Record<string, number>>)[0] ?? {};
     return {
       total: t.total ?? 0,
+      distinctInquiries: t.distinct_inquiries ?? 0,
       last7Days: t.last7 ?? 0,
       totalCost: t.total_cost ?? 0,
       avgCost: t.avg_cost ?? 0,
@@ -293,6 +308,7 @@ export async function inquiryAnalytics(): Promise<InquiryAnalytics> {
   } catch {
     return {
       total: 0,
+      distinctInquiries: 0,
       last7Days: 0,
       totalCost: 0,
       avgCost: 0,
@@ -333,6 +349,10 @@ export type InquiryTurnSearch = {
 export type SessionInquiryTurn = InquirySummary & {
   readonly searches: ReadonlyArray<InquiryTurnSearch>;
   readonly judgeVerdict?: string | null;
+  // Segmentation (D): which distinct inquiry within the session this turn belongs
+  // to, and that inquiry's auto-title. null until the Haiku batch has run.
+  readonly inquiryNo?: number | null;
+  readonly inquiryTitle?: string | null;
 };
 
 function extractSearches(payload: unknown): InquiryTurnSearch[] {
@@ -354,7 +374,7 @@ export async function listSessionInquiries(sessionId: string): Promise<SessionIn
       SELECT i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
              i.search_count, i.top_confidence, i.total_cost, i.payload,
              i.judge_groundedness, i.judge_relevance, i.judge_hallucination,
-             i.judge_verdict, i.judged_at,
+             i.judge_verdict, i.judged_at, i.inquiry_no, i.inquiry_title,
              COUNT(*) FILTER (WHERE af.kind = 'up')::int   AS up,
              COUNT(*) FILTER (WHERE af.kind = 'down')::int AS down,
              COUNT(*) FILTER (WHERE af.kind = 'edit')::int AS edits,
@@ -367,7 +387,7 @@ export async function listSessionInquiries(sessionId: string): Promise<SessionIn
       GROUP BY i.session_id, i.turn_id, i.created_at, i.channel, i.question, i.answer,
                i.search_count, i.top_confidence, i.total_cost, i.payload,
                i.judge_groundedness, i.judge_relevance, i.judge_hallucination,
-               i.judge_verdict, i.judged_at
+               i.judge_verdict, i.judged_at, i.inquiry_no, i.inquiry_title
       ORDER BY i.created_at ASC
     `) as Array<{
       session_id: string;
@@ -385,6 +405,8 @@ export async function listSessionInquiries(sessionId: string): Promise<SessionIn
       judge_hallucination: boolean | null;
       judge_verdict: string | null;
       judged_at: string | null;
+      inquiry_no: number | null;
+      inquiry_title: string | null;
       up: number;
       down: number;
       edits: number;
@@ -406,6 +428,8 @@ export async function listSessionInquiries(sessionId: string): Promise<SessionIn
       judgeRelevance: r.judge_relevance,
       judgeHallucination: r.judge_hallucination,
       judgeVerdict: r.judge_verdict,
+      inquiryNo: r.inquiry_no,
+      inquiryTitle: r.inquiry_title,
       up: r.up,
       down: r.down,
       edits: r.edits,
@@ -560,4 +584,101 @@ export async function listInquiriesWithSignals(limit = 100): Promise<InquirySumm
   } catch {
     return [];
   }
+}
+
+// --- Inquiry segmentation (D) ---
+
+// One turn handed to the Haiku segmenter: just enough signal (the question plus
+// the turn's strongest search query + top source title) to tell where one
+// inquiry ends and the next begins, without shipping full answer bodies.
+export type SegmentTurn = {
+  readonly turnId: string;
+  readonly question: string;
+  readonly topQuery: string;
+  readonly topSource: string;
+};
+export type SessionToSegment = {
+  readonly sessionId: string;
+  readonly turns: ReadonlyArray<SegmentTurn>;
+};
+// The segmenter's assignment for one turn.
+export type SegmentAssignment = {
+  readonly turnId: string;
+  readonly inquiryNo: number;
+  readonly inquiryTitle: string;
+};
+
+function topQueryAndSource(payload: unknown): { topQuery: string; topSource: string } {
+  const searches = (payload as { searches?: InquirySearchLog[] })?.searches ?? [];
+  const first = searches[0];
+  return {
+    topQuery: first?.query ?? "",
+    topSource: first?.sources?.[0]?.title ?? "",
+  };
+}
+
+// Sessions that still have at least one un-segmented turn (inquiry_no IS NULL)
+// and haven't exhausted their retry budget. A newly-logged turn always arrives
+// with inquiry_no NULL, so its whole session re-qualifies and gets re-segmented
+// — which is exactly what we want when a thread grows.
+export async function selectSessionsToSegment(limit = 25): Promise<SessionToSegment[]> {
+  await ensureSchema();
+  const sql = getSql();
+  const sessions = (await sql`
+    SELECT session_id
+    FROM inquiries
+    GROUP BY session_id
+    HAVING bool_or(inquiry_no IS NULL) AND max(segment_attempts) < 3
+    ORDER BY max(created_at) DESC
+    LIMIT ${limit}
+  `) as Array<{ session_id: string }>;
+
+  const out: SessionToSegment[] = [];
+  for (const s of sessions) {
+    const rows = (await sql`
+      SELECT turn_id, question, payload
+      FROM inquiries
+      WHERE session_id = ${s.session_id}
+      ORDER BY created_at ASC
+    `) as Array<{ turn_id: string; question: string; payload: unknown }>;
+    out.push({
+      sessionId: s.session_id,
+      turns: rows.map((r) => {
+        const { topQuery, topSource } = topQueryAndSource(r.payload);
+        return { turnId: r.turn_id, question: r.question, topQuery, topSource };
+      }),
+    });
+  }
+  return out;
+}
+
+// Persist the segmenter's assignments for one session. Stamps inquiry_no +
+// inquiry_title (and clears segment_attempts) so the session drops out of the
+// work set until a new turn re-NULLs it.
+export async function applySessionSegmentation(
+  sessionId: string,
+  assignments: ReadonlyArray<SegmentAssignment>,
+): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  for (const a of assignments) {
+    await sql`
+      UPDATE inquiries
+      SET inquiry_no = ${a.inquiryNo},
+          inquiry_title = ${a.inquiryTitle.slice(0, 120)},
+          segment_attempts = 0
+      WHERE session_id = ${sessionId} AND turn_id = ${a.turnId}
+    `;
+  }
+}
+
+// Poison-session guard: on a segmenter/parse failure bump segment_attempts on
+// every turn of the session; at 3 the session stops being selected.
+export async function markSessionSegmentFailure(sessionId: string): Promise<void> {
+  await ensureSchema();
+  const sql = getSql();
+  await sql`
+    UPDATE inquiries SET segment_attempts = segment_attempts + 1
+    WHERE session_id = ${sessionId}
+  `;
 }

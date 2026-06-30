@@ -15,7 +15,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { InquiryFlag } from "@/app/_components/inquiry-flag";
-import { MessageResponse } from "@/components/ai-elements/message";
+import { MessageBubbles } from "@/app/_components/message-bubbles";
 import { formatFeedbackDate, formatUsd, reasonBadgeClass, reasonLabel } from "@/lib/feedback";
 import {
   type InquiryTurnSearch,
@@ -34,6 +34,43 @@ export const metadata: Metadata = {
 
 type Props = { readonly params: Promise<{ sessionId: string }> };
 
+// Reconstruct a run of turns as chat messages so it can be flagged into the same
+// review queue as a live-chat thread (text transcript; the retrieval trail stays
+// visible on the inquiry thread itself).
+function turnsToMessages(turns: ReadonlyArray<SessionInquiryTurn>): EveMessage[] {
+  const messages: EveMessage[] = [];
+  for (const t of turns) {
+    if (t.question) {
+      messages.push({ id: `${t.turnId}-user`, role: "user", parts: [{ type: "text", text: t.question }] });
+    }
+    messages.push({
+      id: `${t.turnId}-assistant`,
+      role: "assistant",
+      parts: [{ type: "text", text: t.answer || "(no answer captured)" }],
+    });
+  }
+  return messages;
+}
+
+// Group a session's turns into its distinct inquiries (contiguous runs sharing an
+// inquiry_no). Until the Haiku batch has segmented the session every turn's
+// inquiryNo is null, in which case the whole session is treated as one inquiry.
+type InquiryGroup = {
+  readonly inquiryNo: number;
+  readonly title: string | null;
+  readonly turns: SessionInquiryTurn[];
+};
+function groupByInquiry(turns: ReadonlyArray<SessionInquiryTurn>): InquiryGroup[] {
+  const groups: InquiryGroup[] = [];
+  for (const t of turns) {
+    const no = t.inquiryNo ?? 1;
+    const last = groups[groups.length - 1];
+    if (last && last.inquiryNo === no) last.turns.push(t);
+    else groups.push({ inquiryNo: no, title: t.inquiryTitle ?? null, turns: [t] });
+  }
+  return groups;
+}
+
 export default async function InquiryThreadPage({ params }: Props) {
   const { sessionId } = await params;
   const turns = await listSessionInquiries(sessionId);
@@ -43,24 +80,11 @@ export default async function InquiryThreadPage({ params }: Props) {
   const retrievalCount = turns.reduce((sum, t) => sum + t.searchCount, 0);
   const channel = turns.find((t) => t.channel)?.channel ?? "";
 
-  // Reconstruct the conversation as chat messages so it can be flagged into the
-  // same review queue as a live-chat thread (text transcript; the retrieval
-  // trail stays visible here on the inquiry thread itself).
-  const messages: EveMessage[] = [];
-  for (const t of turns) {
-    if (t.question) {
-      messages.push({
-        id: `${t.turnId}-user`,
-        role: "user",
-        parts: [{ type: "text", text: t.question }],
-      });
-    }
-    messages.push({
-      id: `${t.turnId}-assistant`,
-      role: "assistant",
-      parts: [{ type: "text", text: t.answer || "(no answer captured)" }],
-    });
-  }
+  const groups = groupByInquiry(turns);
+  // "Segmented" = the Haiku batch has split this session into >1 distinct
+  // inquiry. A single-inquiry (or not-yet-segmented) session renders flat.
+  const segmented = groups.length > 1;
+  const messages = turnsToMessages(turns);
 
   return (
     <main className="bg-white text-clever-black">
@@ -88,6 +112,11 @@ export default async function InquiryThreadPage({ params }: Props) {
             <span>
               {turns.length} {turns.length === 1 ? "turn" : "turns"}
             </span>
+            {segmented ? (
+              <span>
+                · {groups.length} {groups.length === 1 ? "inquiry" : "inquiries"}
+              </span>
+            ) : null}
             <span>· {channelLabel(channel)}</span>
             <span className="inline-flex items-center gap-1">
               ·<CoinsIcon className="size-3 text-clever-blue/60" /> {formatUsd(totalCost)} total
@@ -95,37 +124,137 @@ export default async function InquiryThreadPage({ params }: Props) {
             <span>· started {formatFeedbackDate(turns[0].createdAt)}</span>
           </p>
           <p className="mt-2 break-all font-mono text-clever-black/35 text-xs">session {sessionId}</p>
-          <div className="mt-5">
-            <InquiryFlag
-              messages={messages}
-              persona="anyone"
-              retrievalCount={retrievalCount}
-              threadCost={totalCost}
-            />
-          </div>
+          {/* When segmented, flagging lives per-inquiry (below) so flagging one
+              inquiry doesn't staple N unrelated ones into one review item. */}
+          {segmented ? (
+            <p className="mt-4 text-clever-black/45 text-sm">
+              This session holds {groups.length} distinct inquiries — flag whichever one needs the team.
+            </p>
+          ) : (
+            <div className="mt-5">
+              <InquiryFlag
+                messages={messages}
+                persona="anyone"
+                retrievalCount={retrievalCount}
+                threadCost={totalCost}
+              />
+            </div>
+          )}
         </div>
       </section>
 
       <section className="px-6 pb-20">
-        <div className="mx-auto max-w-3xl space-y-5">
-          {turns.map((turn, i) => (
-            <TurnCard index={i + 1} key={turn.turnId} turn={turn} />
-          ))}
+        <div className="mx-auto max-w-3xl space-y-8">
+          {(() => {
+            let turnIndex = 0;
+            return groups.map((group) => {
+              const start = turnIndex;
+              turnIndex += group.turns.length;
+              return (
+                <InquirySection
+                  group={group}
+                  key={group.inquiryNo}
+                  showHeader={segmented}
+                  startIndex={start}
+                />
+              );
+            });
+          })()}
         </div>
       </section>
     </main>
   );
 }
 
-function TurnCard({ turn, index }: { readonly turn: SessionInquiryTurn; readonly index: number }) {
+// One distinct inquiry within the session, rendered as the conversation it
+// originally was: a titled heading (when segmented) + its own scoped flag, the
+// chat bubbles (same look as the live chat and the flagged-thread view), and a
+// collapsed "Show your work" panel holding each turn's retrieval trail + auto-eval
+// so the analytics stay one click away without cluttering the conversation.
+function InquirySection({
+  group,
+  startIndex,
+  showHeader,
+}: {
+  readonly group: InquiryGroup;
+  readonly startIndex: number;
+  readonly showHeader: boolean;
+}) {
+  const cost = group.turns.reduce((s, t) => s + t.totalCost, 0);
+  const retrievalCount = group.turns.reduce((s, t) => s + t.searchCount, 0);
+  const messages = turnsToMessages(group.turns);
+  return (
+    <div className="space-y-4">
+      {showHeader ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-clever-light-blue/70 border-b pb-2">
+          <h2 className="flex min-w-0 items-center gap-2 font-medium text-clever-navy">
+            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-clever-blue/10 font-semibold text-[11px] text-clever-blue tabular-nums">
+              {group.inquiryNo}
+            </span>
+            <span className="truncate">{group.title ?? `Inquiry ${group.inquiryNo}`}</span>
+          </h2>
+          <InquiryFlag
+            messages={messages}
+            persona="anyone"
+            retrievalCount={retrievalCount}
+            threadCost={cost}
+          />
+        </div>
+      ) : null}
+
+      {/* The conversation as chat bubbles, one anchor per turn so the inquiries
+          log's #turn-<id> deep links still land. */}
+      {group.turns.map((turn) => (
+        <div className="scroll-mt-6" id={`turn-${turn.turnId}`} key={turn.turnId}>
+          <MessageBubbles messages={turnsToMessages([turn])} />
+        </div>
+      ))}
+
+      <WorkTrail startIndex={startIndex} turns={group.turns} />
+    </div>
+  );
+}
+
+// Collapsed-by-default work panel for one inquiry: each turn's cost, retrieval
+// confidence, signals, the full retrieval trail, and the judge's auto-eval.
+function WorkTrail({
+  turns,
+  startIndex,
+}: {
+  readonly turns: ReadonlyArray<SessionInquiryTurn>;
+  readonly startIndex: number;
+}) {
+  const cost = turns.reduce((s, t) => s + t.totalCost, 0);
+  const searchCount = turns.reduce((s, t) => s + t.searchCount, 0);
+  return (
+    <details className="group overflow-hidden rounded-xl border border-clever-light-blue bg-clever-light-blue/10">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-2.5 text-clever-black/55 text-xs hover:bg-clever-light-blue/20">
+        <SearchCheckIcon className="size-3.5 text-clever-blue/60" />
+        <span className="font-medium">Show the work</span>
+        <span className="text-clever-black/40">
+          · {searchCount === 0 ? "no search" : `${searchCount} search${searchCount === 1 ? "" : "es"}`}
+        </span>
+        <span className="ml-auto inline-flex items-center gap-1 text-clever-black/45 tabular-nums">
+          <CoinsIcon className="size-3 text-clever-blue/60" />
+          {formatUsd(cost)}
+        </span>
+      </summary>
+      <div className="space-y-5 border-clever-light-blue/70 border-t px-4 py-4">
+        {turns.map((turn, i) => (
+          <TurnWork index={startIndex + i + 1} key={turn.turnId} turn={turn} />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+// One turn's analytics inside the work panel: meta line + retrieval trail + eval.
+function TurnWork({ turn, index }: { readonly turn: SessionInquiryTurn; readonly index: number }) {
   const weak =
     turn.searchCount > 0 && (turn.topConfidence === "low" || turn.topConfidence === "unscored");
   return (
-    <div
-      className="scroll-mt-6 overflow-hidden rounded-2xl border border-clever-light-blue"
-      id={`turn-${turn.turnId}`}
-    >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 border-clever-light-blue/70 border-b bg-clever-light-blue/15 px-4 py-2.5 text-clever-black/45 text-xs">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-clever-black/45 text-xs">
         <span className="font-medium text-clever-navy/70">Turn {index}</span>
         <span>· {formatFeedbackDate(turn.createdAt)}</span>
         <span className="inline-flex items-center gap-1">
@@ -150,44 +279,8 @@ function TurnCard({ turn, index }: { readonly turn: SessionInquiryTurn; readonly
         </span>
       </div>
 
-      <div className="space-y-4 px-4 py-4">
-        {turn.question ? (
-          <div>
-            <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
-              Asked
-            </p>
-            <p className="font-medium text-clever-navy">{turn.question}</p>
-          </div>
-        ) : index > 1 ? (
-          <p className="text-clever-black/45 text-sm italic">
-            ↳ Reply to the clarifying question above
-          </p>
-        ) : (
-          <div>
-            <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
-              Asked
-            </p>
-            <p className="text-clever-black/40 italic">(no question captured)</p>
-          </div>
-        )}
-
-        <div>
-          <p className="mb-1 font-medium text-clever-black/40 text-[11px] uppercase tracking-wide">
-            Answered
-          </p>
-          {turn.answer ? (
-            <div className="text-clever-black/80 text-sm leading-relaxed">
-              <MessageResponse>{turn.answer}</MessageResponse>
-            </div>
-          ) : (
-            <p className="text-clever-black/40 text-sm italic">(no answer text captured)</p>
-          )}
-        </div>
-
-        {turn.searches.length > 0 ? <RetrievalTrail searches={turn.searches} /> : null}
-
-        {turn.judged ? <JudgeNote turn={turn} /> : null}
-      </div>
+      {turn.searches.length > 0 ? <RetrievalTrail searches={turn.searches} /> : null}
+      {turn.judged ? <JudgeNote turn={turn} /> : null}
     </div>
   );
 }

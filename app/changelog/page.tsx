@@ -4,6 +4,7 @@ import {
   Link2Icon,
   PencilIcon,
   RefreshCwIcon,
+  RocketIcon,
   SparklesIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -21,6 +22,25 @@ export const metadata = {
   description:
     "When the assistant last re-synced Clever's help center, when its knowledge last actually changed, and an AI-written log of every article added, removed, or updated.",
 };
+
+// Hand-maintained product changelog — what we SHIPPED to the app, distinct from
+// the auto-generated knowledge-base freshness log below it (that tracks Clever
+// help-center article changes). Add the newest entry to the top.
+type ProductUpdate = {
+  readonly date: string;
+  readonly title: string;
+  readonly body: string;
+  readonly tags: readonly string[];
+};
+const PRODUCT_UPDATES: readonly ProductUpdate[] = [
+  {
+    date: "June 30, 2026",
+    title: "Inquiry Boundaries — new questions start clean",
+    body:
+      "Testers often stacked several unrelated questions into one chat instead of starting a new thread, so each new question inherited the previous one's topic and audience — polluting retrieval and the answer. Now the agent detects when a message opens a new, unrelated inquiry and drops the stale context (on web and Discord), the web chat nudges you to start a fresh thread when the topic shifts, and the Inquiries dashboard splits each session into its real, auto-titled inquiries.",
+    tags: ["Agent", "Web", "Discord", "Analytics"],
+  },
+];
 
 // Server-rendered relative time ("yesterday", "3 days ago"). The page is
 // force-dynamic, so Date.now() is evaluated per request.
@@ -57,7 +77,7 @@ export default async function ChangelogPage() {
         <div className="relative mx-auto max-w-3xl">
           <p className="inline-flex items-center gap-1.5 font-semibold text-clever-blue text-xs uppercase tracking-wider">
             <RefreshCwIcon className="size-3.5" />
-            Knowledge base freshness
+            Changelog
           </p>
           <h1 className="mt-1 font-normal text-4xl text-clever-navy leading-[1.05] sm:text-5xl">
             What&apos;s changed
@@ -71,8 +91,28 @@ export default async function ChangelogPage() {
         </div>
       </section>
 
+      {PRODUCT_UPDATES.length > 0 ? (
+        <section className="px-6 pb-4">
+          <div className="mx-auto max-w-3xl space-y-3">
+            <p className="flex items-center gap-1.5 font-medium text-clever-black/40 text-xs uppercase tracking-wide">
+              <RocketIcon className="size-3.5 text-clever-blue/70" />
+              Product updates
+            </p>
+            <ol className="space-y-4">
+              {PRODUCT_UPDATES.map((u) => (
+                <ProductUpdateCard key={u.title} update={u} />
+              ))}
+            </ol>
+          </div>
+        </section>
+      ) : null}
+
       <section className="px-6 pb-16">
         <div className="mx-auto max-w-3xl space-y-6">
+          <p className="flex items-center gap-1.5 border-clever-light-blue/70 border-t pt-6 font-medium text-clever-black/40 text-xs uppercase tracking-wide">
+            <RefreshCwIcon className="size-3.5 text-clever-green/70" />
+            Knowledge base freshness
+          </p>
           {status.available ? (
             <>
               <FreshnessCards status={status} />
@@ -107,6 +147,33 @@ export default async function ChangelogPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function ProductUpdateCard({ update }: { readonly update: ProductUpdate }) {
+  return (
+    <li className="rounded-xl border border-clever-light-blue bg-white p-5">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-medium text-clever-navy">{update.title}</span>
+        <span className="text-clever-black/40 text-xs">{update.date}</span>
+      </div>
+      <p className="mt-2 flex items-start gap-2 text-clever-black/80 leading-relaxed">
+        <SparklesIcon className="mt-1 size-4 shrink-0 text-clever-blue/70" />
+        <span>{update.body}</span>
+      </p>
+      {update.tags.length > 0 ? (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {update.tags.map((tag) => (
+            <span
+              className="inline-flex items-center rounded-full bg-clever-blue/10 px-2 py-0.5 font-medium text-[11px] text-clever-blue"
+              key={tag}
+            >
+              {tag}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </li>
   );
 }
 

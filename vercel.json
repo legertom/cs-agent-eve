@@ -17,6 +17,10 @@
     {
       "path": "/api/judge/batch",
       "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/api/segment/batch",
+      "schedule": "*/10 * * * *"
     }
   ]
 }
