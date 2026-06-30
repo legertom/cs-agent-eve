@@ -2,10 +2,12 @@ import {
   ArrowUpRightIcon,
   CoinsIcon,
   FileSearchIcon,
+  FileTextIcon,
   FlagIcon,
   LightbulbIcon,
   ShieldAlertIcon,
   SparklesIcon,
+  TableIcon,
   TrendingUpIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -62,12 +64,13 @@ export default async function ReportPage() {
           </p>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <RunReportButton hasReport={Boolean(report)} />
-            {report ? (
-              <span className="text-clever-black/40 text-xs">
-                Generated {formatFeedbackDate(report.generatedAt)} · last {report.windowDays} days · {report.model}
-              </span>
-            ) : null}
+            {report ? <DownloadLinks /> : null}
           </div>
+          {report ? (
+            <p className="mt-2 text-clever-black/40 text-xs">
+              Generated {formatFeedbackDate(report.generatedAt)} · last {report.windowDays} days · {report.model}
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -87,6 +90,29 @@ export default async function ReportPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function DownloadLinks() {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <a
+        className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/40"
+        download
+        href="/api/feedback-report/export?format=md"
+      >
+        <FileTextIcon className="size-4 text-clever-blue/70" />
+        Report (.md)
+      </a>
+      <a
+        className="inline-flex items-center gap-1.5 rounded-lg border border-clever-light-blue bg-white px-3 py-1.5 font-medium text-clever-navy text-sm transition-colors hover:bg-clever-light-blue/40"
+        download
+        href="/api/feedback-report/export?format=csv"
+      >
+        <TableIcon className="size-4 text-clever-blue/70" />
+        Worklist (.csv)
+      </a>
+    </span>
   );
 }
 
