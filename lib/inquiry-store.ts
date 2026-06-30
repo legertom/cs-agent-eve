@@ -96,6 +96,9 @@ export type InquiryJudgment = {
   readonly hallucination: boolean;
   readonly verdict: string;
   readonly model: string;
+  // USD spent on this judge call. Optional so the failure path / other callers
+  // needn't supply it (NULL persisted when absent).
+  readonly judge_cost?: number;
 };
 
 // Roll-up for the analytics dashboard — "how many inquiries, what do they cost,
@@ -172,6 +175,11 @@ function ensureSchema(): Promise<void> {
       await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_model text`;
       await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judged_at timestamptz`;
       await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_attempts integer NOT NULL DEFAULT 0`;
+      // judge_cost: USD spent on the (body-grounded) judge call for this row.
+      // re_judge_at: operator marker to re-score an already-judged row ONCE (the
+      // guarded body-grounding backfill — see selectUnjudgedInquiries).
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS judge_cost double precision`;
+      await sql`ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS re_judge_at timestamptz`;
       await sql`CREATE INDEX IF NOT EXISTS inquiries_judged_at_idx ON inquiries (judged_at DESC) WHERE judged_at IS NOT NULL`;
       // Inquiry segmentation (D). A session is N distinct inquiries when users
       // stack unrelated questions in one thread; these columns let the dashboard
@@ -445,13 +453,31 @@ export async function listSessionInquiries(sessionId: string): Promise<SessionIn
 // Rows the judge still needs to score. Poison-row guard: skip rows that already
 // failed 3 times (judge_attempts) so a malformed answer isn't re-billed forever,
 // and skip clarifying-only turns (search_count = 0) — there's nothing to ground.
+// Also admits already-judged rows explicitly marked for a one-time re-score via
+// re_judge_at (the guarded body-grounding backfill): a row qualifies if it is
+// unjudged OR re-marked, but in BOTH cases judge_attempts < 3 and search_count > 0
+// still apply (a row poisoned at 3 attempts is NOT re-judged by marking
+// re_judge_at — that needs an explicit operator reset of judge_attempts).
+// updateInquiryJudgment clears re_judge_at on success, so a marked row re-scores
+// exactly once per marking and then drops back out of this SELECT.
+//
+// Re-judge rows that were judged before bodies shipped (run ONCE, manually):
+//   UPDATE inquiries SET re_judge_at = now()
+//   WHERE judge_model = 'anthropic/claude-haiku-4.5'
+//     AND judged_at < '<cutoff-iso-timestamp>'
+//     AND judge_attempts < 3;
+// The batch then re-scores up to LIMIT (20) marked rows per run; re_judge_at is
+// cleared on each successful re-score, so large backfills drain across multiple
+// runs. Marking >LIMIT rows is safe — they persist until processed.
 export async function selectUnjudgedInquiries(limit = 20): Promise<UnjudgedInquiry[]> {
   await ensureSchema();
   const sql = getSql();
   const rows = (await sql`
     SELECT session_id, turn_id, question, answer, payload
     FROM inquiries
-    WHERE judged_at IS NULL AND judge_attempts < 3 AND search_count > 0
+    WHERE (judged_at IS NULL OR (re_judge_at IS NOT NULL AND re_judge_at <= now()))
+      AND judge_attempts < 3
+      AND search_count > 0
     ORDER BY created_at ASC
     LIMIT ${limit}
   `) as Array<{
@@ -494,7 +520,9 @@ export async function updateInquiryJudgment(
       judge_hallucination = ${j.hallucination},
       judge_verdict       = ${j.verdict.slice(0, 280)},
       judge_model         = ${j.model},
-      judged_at           = now()
+      judge_cost          = ${j.judge_cost ?? null},
+      judged_at           = now(),
+      re_judge_at         = NULL
     WHERE session_id = ${sessionId} AND turn_id = ${turnId}
   `;
 }

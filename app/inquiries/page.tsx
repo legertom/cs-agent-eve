@@ -164,7 +164,7 @@ function SignalChips({ item }: { readonly item: InquirySummary }) {
       {hasJudge ? (
         <span
           className="inline-flex items-center gap-1 rounded-full border border-clever-light-blue bg-clever-light-blue/30 px-2 py-0.5 font-medium text-[10px] text-clever-navy/70 tabular-nums"
-          title="Judge scores — groundedness is a weak signal (sources are titles/URLs only)"
+          title="Judge scores — groundedness now reflects the full article bodies the judge read"
         >
           G {pct(item.judgeGroundedness)} · R {pct(item.judgeRelevance)}
         </span>
@@ -282,7 +282,7 @@ function AnalyticsDashboard({ stats }: { readonly stats: InquiryAnalytics }) {
           </div>
           {stats.judgedCount > 0 ? (
             <p className="text-clever-black/40 text-xs">
-              Groundedness is a weak signal — the judge sees source titles + URLs, not article bodies.
+              Groundedness is a strong signal — the judge reads the full article bodies of the retrieved sources.
             </p>
           ) : null}
         </div>

@@ -1,6 +1,7 @@
 import { gateway } from "@ai-sdk/gateway";
 import { generateText } from "ai";
 import { z } from "zod";
+import type { StepUsage } from "@/lib/inference-cost";
 
 // LLM-as-judge auto-eval. Scores a logged inquiry for groundedness, answer
 // relevance, and a hallucination flag, using a CHEAP model through the Vercel AI
@@ -12,26 +13,28 @@ import { z } from "zod";
 // Sonnet 4.6 answers; Haiku 4.5 judges (~10x cheaper input/output).
 export const JUDGE_MODEL = "anthropic/claude-haiku-4.5";
 
-// GROUNDING LIMITATION (load-bearing): the stored inquiry payload keeps only
-// {rank,title,url,score} per source — there is NO article body/excerpt/snippet
-// persisted anywhere. We accept that (option a): the judge grounds ONLY against
-// the question, the answer, and the source TITLES + URLs, and is told to score
-// conservatively when a claim can't be verified from titles alone. Groundedness
-// is therefore a WEAK signal — surfaced as such in the dashboard.
+// GROUNDING (load-bearing): the stored inquiry payload keeps only
+// {rank,title,url,score} per source — no article body is persisted. So at judge
+// time the batch route (app/api/judge/batch/route.ts) fetches each source's full
+// article body LIVE from the KB via getArticleByUrl, capped per source and
+// overall (see the MAX_BODY_* caps in that route), and feeds those bodies to the
+// judge. Bodies are NEVER persisted onto the inquiry — they are read fresh each
+// run. Groundedness is therefore now a STRONG, body-backed signal, with a
+// title-only fallback when a body is missing (KB miss / rotated URL).
 export const JUDGE_SYSTEM = [
   "You are a strict evaluator of a customer-support agent's answer.",
   "You are given the user's question, the assistant's answer, and the LIST OF SOURCES the assistant retrieved.",
-  "Each source is ONLY a title and a URL — you do NOT have the article bodies.",
-  "Judge whether the answer's claims are attributable to and consistent with those titled sources;",
-  "when you cannot verify a claim from the available titles/URLs, treat it as unsupported and score conservatively.",
+  "For each source you are given its title, its URL, and — when available — the article body/excerpt (the excerpt may be truncated).",
+  "Ground your evaluation STRICTLY against the provided source content: judge whether the answer's claims are attributable to and consistent with the source bodies.",
+  "When a source provides only a title and URL with no body, evaluate that source on its title and URL alone; a single missing body must NOT force conservative scoring of the whole answer.",
   "Never use outside knowledge.",
+  "If the answer's key claims are not attributable to the provided source bodies, set hallucination to true and keep groundedness low; do not report hallucination:false alongside a near-zero groundedness.",
   "Output ONLY a single minified JSON object — no prose, no markdown fences — with exactly these keys:",
   '{"groundedness":<number 0..1>,"relevance":<number 0..1>,"hallucination":<boolean>,"verdict":<string>}.',
-  "groundedness = degree to which the answer's claims are attributable to the listed sources",
-  "(a WEAK signal given titles-only — score conservatively).",
+  "groundedness = degree to which the answer's claims are attributable to the provided sources.",
   "relevance = how well the answer addresses the user's question (0..1).",
   "hallucination = true if the answer states specific facts/steps/URLs not plausibly attributable to the listed sources.",
-  "verdict = one short sentence (<= 280 chars) explaining the scores.",
+  "verdict = one short sentence (<= 280 chars) explaining the scores; you MAY briefly note if grounding was limited by a missing body, but do not enumerate which sources lacked bodies.",
 ].join(" ");
 
 export type JudgeResult = {
@@ -86,21 +89,40 @@ export function parseJudge(text: string): JudgeResult {
 export async function judgeAnswer(input: {
   readonly question: string;
   readonly answer: string;
-  readonly sources: ReadonlyArray<{ rank?: number; title?: string; url?: string }>;
-}): Promise<JudgeResult> {
+  readonly sources: ReadonlyArray<{ rank?: number; title?: string; url?: string; body?: string }>;
+}): Promise<{ result: JudgeResult; usage?: StepUsage }> {
+  // Collapse CR/LF runs to a single space so a field's own newlines can't
+  // fabricate extra source rows in the \n-joined list below (bodies, and also
+  // titles/urls, for safety). Bodies are already char-capped by the caller.
+  const oneLine = (s: string): string => s.replace(/[\r\n]+/g, " ");
   const sourceList = input.sources.length
     ? input.sources
-        .map((s, i) => `${s.rank ?? i + 1}. ${s.title?.trim() || "(untitled)"} — ${s.url?.trim() || "(no url)"}`)
+        .map((s, i) => {
+          const head = `${s.rank ?? i + 1}. ${oneLine(s.title?.trim() || "(untitled)")} — ${oneLine(s.url?.trim() || "(no url)")}`;
+          const body = s.body?.trim();
+          // Only emit a Body line for a non-empty body (empty == title-only).
+          return body ? `${head}\n   Body: ${oneLine(body)}` : head;
+        })
         .join("\n")
     : "(no sources retrieved)";
 
   const prompt = [
     `Question:\n${input.question || "(none captured)"}`,
-    `\nRetrieved sources (title + URL only — you do NOT have the article bodies):\n${sourceList}`,
+    `\nRetrieved sources (title, URL, and article body/excerpt when available):\n${sourceList}`,
     `\nAssistant answer:\n${input.answer || "(empty)"}`,
     "\nReturn ONLY the minified JSON object described in the system prompt.",
   ].join("\n");
 
-  const { text } = await generateText({ model: gateway(JUDGE_MODEL), system: JUDGE_SYSTEM, prompt });
-  return parseJudge(text);
+  const { text, usage } = await generateText({ model: gateway(JUDGE_MODEL), system: JUDGE_SYSTEM, prompt });
+  // Map the AI SDK LanguageModelUsage onto StepUsage for cost accounting. Cache
+  // tokens are nested under inputTokenDetails, not top-level.
+  const stepUsage: StepUsage = {
+    inputTokens: usage?.inputTokens,
+    outputTokens: usage?.outputTokens,
+    cacheReadTokens: usage?.inputTokenDetails?.cacheReadTokens,
+    cacheWriteTokens: usage?.inputTokenDetails?.cacheWriteTokens,
+  };
+  // parseJudge still throws on unrecoverable JSON — judgeAnswer throws before
+  // returning, exactly as before; the batch route's catch handles it.
+  return { result: parseJudge(text), usage: stepUsage };
 }

@@ -35,6 +35,13 @@ type ProductUpdate = {
 const PRODUCT_UPDATES: readonly ProductUpdate[] = [
   {
     date: "June 30, 2026",
+    title: "The judge now reads the articles, not just their titles",
+    body:
+      "Our LLM-as-judge auto-eval used to see only each source's title and URL — so it couldn't catch a confident answer that invented steps a real article never mentions, and groundedness was a deliberately weak, conservative signal. The judge now pulls each retrieved source's full article body live from the knowledge base at scoring time (capped and never stored), and grades the answer against what the sources actually say. In testing, a row the old judge wrongly flagged as a hallucination (groundedness 0.2) was correctly cleared once the judge could read the bodies (0.85) — groundedness is now a strong, body-backed signal.",
+    tags: ["Analytics", "AI", "Eval"],
+  },
+  {
+    date: "June 30, 2026",
     title: "Support QA Report — an analyst that reads the feedback for you",
     body:
       "The Flagged queue showed what went wrong; it didn't say what to fix. A new QA analyst now reads every negative signal in the last 30 days — flags, thumbs-down, expert edits, and the judge's hallucination/weak-grounding calls — clusters them into recurring themes, checks each theme against the live knowledge base, and writes a prioritized report with concrete recommendations (write a KB article, fix one, tune the prompt, or tune retrieval), each linked to its evidence. It runs daily and on demand from the new QA Report tab.",

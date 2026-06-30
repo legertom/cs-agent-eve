@@ -33,3 +33,30 @@ export function priceInferenceUsage(usage: StepUsage | undefined | null): number
     1_000_000
   );
 }
+
+// Claude Haiku 4.5 list price (USD per 1M tokens) — the LLM-as-judge model
+// (lib/judge.ts JUDGE_MODEL = "anthropic/claude-haiku-4.5"). AI Gateway passes
+// provider list price through at zero markup. Verified live from the catalogue:
+//   curl -s https://ai-gateway.vercel.sh/v1/models | jq '.data[] | select(.id=="anthropic/claude-haiku-4.5").pricing'
+// NOTE: these rates assume a Haiku-class JUDGE_MODEL. If JUDGE_MODEL is ever
+// swapped to a non-Haiku id, update these constants or judge cost will misbill.
+// (JUDGE_MODEL is intentionally NOT imported here — judge.ts imports StepUsage
+// from this module, and importing back would create a circular dependency.)
+const JUDGE_INPUT_PER_1M = 1.0;
+const JUDGE_OUTPUT_PER_1M = 5.0;
+const JUDGE_CACHE_READ_PER_1M = 0.1;
+const JUDGE_CACHE_WRITE_PER_1M = 1.25;
+
+// USD for a single judge model call. Mirrors priceInferenceUsage exactly but at
+// Haiku 4.5 rates. Cache terms are included for symmetry even though judge calls
+// usually have zero cache tokens (?? 0 makes them harmless).
+export function judgeInferenceCost(usage: StepUsage | undefined | null): number {
+  if (!usage) return 0;
+  return (
+    ((usage.inputTokens ?? 0) * JUDGE_INPUT_PER_1M +
+      (usage.outputTokens ?? 0) * JUDGE_OUTPUT_PER_1M +
+      (usage.cacheReadTokens ?? 0) * JUDGE_CACHE_READ_PER_1M +
+      (usage.cacheWriteTokens ?? 0) * JUDGE_CACHE_WRITE_PER_1M) /
+    1_000_000
+  );
+}

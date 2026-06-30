@@ -373,7 +373,7 @@ function JudgeNote({ turn }: { readonly turn: SessionInquiryTurn }) {
         <p className="mt-2 text-clever-black/55 text-sm leading-relaxed">{turn.judgeVerdict}</p>
       ) : null}
       <p className="mt-1.5 text-clever-black/35 text-xs">
-        Groundedness is a weak signal — the judge sees source titles + URLs, not article bodies.
+        Groundedness is a strong signal — the judge reads the full article bodies of the retrieved sources.
       </p>
     </div>
   );

@@ -32,7 +32,9 @@ import vectorData from "#data/kb-vectors.json" with { type: "json" };
 //    the strong base ranking when it drifts.
 // Queries are normalized (home_language / camelCase → "home language") so the
 // retrievers see clean tokens.
-type Article = { id: string; url: string; title?: string; text: string };
+// Exported so body-lookup callers (the LLM-as-judge batch route) can name the
+// return type of getArticleByUrl; fields are unchanged.
+export type Article = { id: string; url: string; title?: string; text: string };
 
 // EMBED_MODEL / EMBED_DIMS are imported from kb-config.mjs — the single source
 // shared with the embed step, so the query embedding can never drift from the
@@ -342,6 +344,84 @@ async function ensureIndex(): Promise<void> {
       console.error("[search] bundled fallback build failed:", err);
     }
   }
+}
+
+// --- KB body lookup by URL (for the LLM-as-judge, which grounds against bodies) ---
+// A persisted source row carries only {rank,title,url} — no id, no body. To feed
+// the judge the real article text we resolve a source's URL back to its KB
+// Article (whose `text` is the body), reusing the already-loaded `currentIndex`.
+
+// Normalize a URL so a persisted source.url matches a kb.url despite differing
+// query strings (?language=en_US), trailing slashes, scheme/host case, or
+// percent-encoding. Drops the fragment and the ENTIRE query string. Preserves
+// path case. Never throws — falls back to deterministic string-level
+// normalization for inputs that aren't parseable absolute URLs.
+export function canonicalizeUrl(url: string | null | undefined): string {
+  if (!url) return "";
+  try {
+    const u = new URL(url);
+    const protocol = u.protocol.toLowerCase(); // includes trailing ":"
+    const host = u.host.toLowerCase();
+    // Ignore u.hash (fragment) and u.search (entire query string).
+    let path = u.pathname;
+    try {
+      path = decodeURIComponent(path);
+    } catch {
+      // Malformed % sequence — keep the raw pathname.
+    }
+    if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
+    return `${protocol}//${host}${path}`;
+  } catch {
+    // Not a parseable absolute URL (relative path, mailto:, "not a url", …):
+    // deterministic string-level normalization that never throws, so a malformed
+    // KB url and an equally-malformed source url still canonicalize identically.
+    let s = url.trim();
+    const hash = s.indexOf("#");
+    if (hash !== -1) s = s.slice(0, hash);
+    const q = s.indexOf("?");
+    if (q !== -1) s = s.slice(0, q);
+    s = s.toLowerCase();
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      // Keep raw on malformed %.
+    }
+    if (s.length > 1 && s.endsWith("/")) s = s.slice(0, -1);
+    return s;
+  }
+}
+
+// Per-index-generation memo: canonical URL → first KB Article with that URL.
+// Keyed by index identity (the loader swaps `currentIndex` to a brand-new object
+// on refresh, never mutating in place), so reference identity is a safe cache key
+// and the map rebuilds only when the snapshot is a different object.
+let urlMap: Map<string, Article> | null = null;
+let urlMapFor: KbIndex | null = null;
+
+function articleUrlMap(idx: KbIndex): Map<string, Article> {
+  if (urlMap && urlMapFor === idx) return urlMap;
+  const map = new Map<string, Article>();
+  for (const a of idx.KB) {
+    const canon = canonicalizeUrl(a.url);
+    // First match wins on a canonical-URL collision (rare, degenerate KB case).
+    if (canon && !map.has(canon)) map.set(canon, a);
+  }
+  urlMap = map;
+  urlMapFor = idx;
+  return map;
+}
+
+// Resolve a source URL to its full KB Article (Article.text is the body), or null
+// on a KB miss / null URL / cold-or-failed index. Reuses the loaded index (does
+// NOT re-read #data/kb.json or re-call makeIndex). Returns the Article as-is —
+// truncation/capping is the caller's job, so this stays reusable.
+export async function getArticleByUrl(url: string | null | undefined): Promise<Article | null> {
+  const canon = canonicalizeUrl(url);
+  if (canon === "") return null;
+  await ensureIndex(); // handles the TTL refresh; written never to throw.
+  const idx = currentIndex; // snapshot once, exactly like searchSupport.
+  if (!idx || idx.KB.length === 0) return null;
+  return articleUrlMap(idx).get(canon) ?? null;
 }
 
 // Run the full hybrid + reranked search and return ranked, cited results with a
