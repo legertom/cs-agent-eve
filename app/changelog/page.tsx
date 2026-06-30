@@ -35,6 +35,13 @@ type ProductUpdate = {
 const PRODUCT_UPDATES: readonly ProductUpdate[] = [
   {
     date: "June 30, 2026",
+    title: "Support QA Report — an analyst that reads the feedback for you",
+    body:
+      "The Flagged queue showed what went wrong; it didn't say what to fix. A new QA analyst now reads every negative signal in the last 30 days — flags, thumbs-down, expert edits, and the judge's hallucination/weak-grounding calls — clusters them into recurring themes, checks each theme against the live knowledge base, and writes a prioritized report with concrete recommendations (write a KB article, fix one, tune the prompt, or tune retrieval), each linked to its evidence. It runs daily and on demand from the new QA Report tab.",
+    tags: ["Analytics", "Agent", "AI"],
+  },
+  {
+    date: "June 30, 2026",
     title: "Inquiry Boundaries — new questions start clean",
     body:
       "Testers often stacked several unrelated questions into one chat instead of starting a new thread, so each new question inherited the previous one's topic and audience — polluting retrieval and the answer. Now the agent detects when a message opens a new, unrelated inquiry and drops the stale context (on web and Discord), the web chat nudges you to start a fresh thread when the topic shifts, and the Inquiries dashboard splits each session into its real, auto-titled inquiries.",

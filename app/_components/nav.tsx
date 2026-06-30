@@ -22,6 +22,7 @@ const GROUPS: readonly (readonly NavItem[])[] = [
   [
     { href: "/inquiries", label: "Inquiries" },
     { href: "/feedback", label: "Flagged" },
+    { href: "/reports", label: "QA Report" },
   ],
   [
     { href: "/about", label: "How it works" },

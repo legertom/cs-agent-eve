@@ -1,4 +1,4 @@
-import { CoinsIcon, FlagIcon, SearchCheckIcon, ShieldAlertIcon } from "lucide-react";
+import { CoinsIcon, FlagIcon, SearchCheckIcon, ShieldAlertIcon, SparklesIcon } from "lucide-react";
 import Link from "next/link";
 import { feedbackAnalytics, listFeedback } from "@/lib/feedback-store";
 import {
@@ -42,6 +42,13 @@ export default async function FeedbackPage() {
             one keeps the full transcript and the retrieval trail — confidence and
             sources — so you can see what the answer was based on and why it went off.
           </p>
+          <Link
+            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-clever-blue/30 bg-clever-blue/5 px-3 py-1.5 font-medium text-clever-blue text-sm transition-colors hover:bg-clever-blue/10"
+            href="/reports"
+          >
+            <SparklesIcon className="size-3.5" />
+            See the QA report
+          </Link>
         </div>
       </section>
 
