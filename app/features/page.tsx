@@ -19,6 +19,7 @@ import {
   ScanSearchIcon,
   ShieldCheckIcon,
   SparklesIcon,
+  SplitIcon,
   ThumbsUpIcon,
   TicketIcon,
 } from "lucide-react";
@@ -75,6 +76,13 @@ const LIVE: Feature[] = [
     blurb:
       "On low confidence, a tight margin, a high-stakes topic (billing, data deletion, SSO security), or when articles target different audiences, the agent pauses and asks a clarifying question instead of guessing — durably, mid-turn.",
     tags: ["Human-in-the-loop", "Durable sessions"],
+  },
+  {
+    icon: SplitIcon,
+    title: "Knows when you've changed the subject",
+    blurb:
+      "When a message opens a new, unrelated question, the agent drops the previous topic and audience and searches fresh — so a new inquiry never inherits the last one's context. The web chat nudges you to start a clean thread, and the inquiries log auto-splits each session into its distinct, titled inquiries.",
+    tags: ["Durable sessions", "AI Gateway"],
   },
   {
     icon: UsersIcon,
